@@ -7,3 +7,6 @@ LightBurnMonitor.app/
 
 # Nim cache
 nimcache/
+
+# Local settings — contains SMTP credentials, never commit
+lightburn_tray.json

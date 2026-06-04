@@ -24,13 +24,16 @@ extern int    nim_get_sound_on(void);
 extern int    nim_get_notify_on(void);
 extern int    nim_get_email_on(void);
 extern int    nim_get_status(void);
+extern int         nim_send_test_email(void);
+extern const char* nim_email_last_error(void);
 
 // ── Statics ───────────────────────────────────────────────────────────────────
 static NSStatusItem *gItem      = nil;
 static NSMenuItem   *gStatusHdr = nil;
 static NSMenuItem   *gSoundItem = nil;
 static NSMenuItem   *gNotifyItem= nil;
-static NSMenuItem   *gEmailItem = nil;
+static NSMenuItem   *gEmailItem     = nil;
+static NSMenuItem   *gTestEmailItem = nil;
 static double gPollSecs         = 2.0;
 static double gCompleteSecs     = 8.0;
 
@@ -149,6 +152,14 @@ static NSImage* iconForStatus(int s) {
     gEmailItem.target = self;
     [menu addItem:gEmailItem];
 
+    // Test Email
+    gTestEmailItem = [[NSMenuItem alloc]
+                       initWithTitle:@"Send Test Email\u2026"
+                              action:@selector(onTestEmail:)
+                       keyEquivalent:@""];
+    gTestEmailItem.target = self;
+    [menu addItem:gTestEmailItem];
+
     [menu addItem:[NSMenuItem separatorItem]];
 
     // Exit
@@ -167,6 +178,15 @@ static NSImage* iconForStatus(int s) {
 - (IBAction)onNotify:(id)sender { nim_toggle_notify(); [self syncMenuItems]; }
 - (IBAction)onEmail:(id)sender  { nim_toggle_email();  [self syncMenuItems]; }
 - (IBAction)onExit:(id)sender   { nim_do_exit(); }
+- (IBAction)onTestEmail:(id)sender {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        int ok = nim_send_test_email();
+        const char *title = ok ? "Email Sent"   : "Email Failed";
+        const char *body  = ok ? "Test email delivered successfully."
+                               : nim_email_last_error();
+        mac_show_notification(title, body);
+    });
+}
 
 - (void)syncMenuItems {
     gSoundItem.title  = nim_get_sound_on()  ? @"Sound: On"         : @"Sound: Off";

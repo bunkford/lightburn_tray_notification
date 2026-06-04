@@ -36,10 +36,11 @@ const
   TRAY_UID       = 1
   TIMER_POLL     = 1
   TIMER_COMPLETE = 2
-  ID_SOUND       = 1001
-  ID_NOTIFY      = 1003
-  ID_EMAIL       = 1004
-  ID_EXIT        = 1002
+  ID_SOUND        = 1001
+  ID_NOTIFY       = 1003
+  ID_EMAIL        = 1004
+  ID_TEST_EMAIL   = 1005
+  ID_EXIT         = 1002
 
 # ─── Windows-only extra state ─────────────────────────────────────────────────
 var
@@ -196,6 +197,9 @@ proc showContextMenu(hwnd: HWND) =
   AppendMenuW(hMenu, emailFlags.UINT, ID_EMAIL.UINT_PTR,
               newWideCString(emailLabel))
 
+  AppendMenuW(hMenu, MF_STRING, ID_TEST_EMAIL.UINT_PTR,
+              newWideCString("Send Test Email..."))
+
   AppendMenuW(hMenu, MF_SEPARATOR, 0, nil)
   AppendMenuW(hMenu, MF_STRING, ID_EXIT.UINT_PTR, newWideCString("Exit"))
 
@@ -208,6 +212,14 @@ proc showContextMenu(hwnd: HWND) =
   of ID_NOTIFY: gNotifyOn = not gNotifyOn
   of ID_SOUND:  gSoundOn  = not gSoundOn
   of ID_EMAIL:  gEmailOn  = not gEmailOn
+  of ID_TEST_EMAIL:
+    let (ok, err) = sendTestEmail()
+    if ok:
+      discard MessageBoxW(0, newWideCString("Test email delivered successfully."),
+                          newWideCString(AppName), MB_ICONINFORMATION or MB_OK)
+    else:
+      discard MessageBoxW(0, newWideCString("Could not send test email:\n" & err),
+                          newWideCString(AppName), MB_ICONERROR or MB_OK)
   of ID_EXIT:   gFrame.close()
   else: discard
 
@@ -267,7 +279,9 @@ when isMainModule:
           if gNotifyOn:
             showBalloon("Burn Complete!", "LightBurn has finished the job.")
           playAlert()
-          sendAlertEmail()
+          let (emailOk, emailErr) = sendAlertEmail()
+          if gEmailOn and not emailOk:
+            showBalloon("Email Alert Failed", emailErr)
           # Schedule revert to idle after CompleteSecs seconds
           gFrame.startTimer(gCfg.completeSecs, TIMER_COMPLETE)
 

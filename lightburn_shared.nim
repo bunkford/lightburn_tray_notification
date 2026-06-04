@@ -115,30 +115,41 @@ proc statusLabel*(s: BurnStatus): string =
   of bsComplete:     AppName & " — job complete!"
 
 # ─── SMTP email ───────────────────────────────────────────────────────────────
-proc sendAlertEmail*() =
-  if not gEmailOn: return
+proc smtpSend*(subject, body: string): tuple[ok: bool, err: string] =
+  ## Attempt to send an email with the current SMTP settings.
+  ## Returns (true, "") on success or (false, reason) on failure.
   let s = gCfg.smtp
-  if s.toAddrs.len == 0 or s.fromAddr == "": return
+  if s.toAddrs.len == 0 or s.fromAddr == "":
+    return (false, "No recipients configured in lightburn_tray.json")
   try:
     let sender     = createEmail(s.fromAddr)
     let recipients = s.toAddrs.mapIt(createEmail(it))
-    let msg = createMessage(
-      "LightBurn Job Complete",
-      "LightBurn has finished the job.",
-      sender, recipients)
-    let conn = newSmtp(useSsl = s.useSsl)
+    let msg = createMessage(subject, body, sender, recipients)
+    # Always connect plain first; useSsl=true means STARTTLS (port 587 style).
+    # Nim's newSmtp(useSsl=true) does implicit SSL (SMTPS, port 465) which
+    # causes "wrong version number" on STARTTLS servers.
+    let conn = newSmtp(useSsl = false)
     conn.connect(s.host, Port(s.port))
-    if not s.useSsl:
+    discard conn.ehlo()
+    if s.useSsl:
+      conn.startTls()
       discard conn.ehlo()
-      if s.username != "":
-        conn.startTls()
-        discard conn.ehlo()
     if s.username != "":
       conn.auth(s.username, s.password)
     conn.sendMail(s.fromAddr, s.toAddrs, $msg)
     conn.close()
-  except:
-    discard  # silently ignore email errors
+    return (true, "")
+  except Exception as e:
+    return (false, e.msg)
+
+proc sendAlertEmail*(): tuple[ok: bool, err: string] =
+  ## Send the job-complete alert email (respects gEmailOn flag).
+  if not gEmailOn: return (false, "email alerts disabled")
+  smtpSend("LightBurn Job Complete", "LightBurn has finished the job.")
+
+proc sendTestEmail*(): tuple[ok: bool, err: string] =
+  ## Send a test email to verify SMTP settings (ignores gEmailOn).
+  smtpSend("LightBurn Monitor — Test", "Email settings are working correctly.")
 
 # ─── UDP sockets ──────────────────────────────────────────────────────────────
 proc initSockets*() =

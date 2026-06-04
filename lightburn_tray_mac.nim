@@ -49,13 +49,29 @@ proc nim_poll_tick() {.exportc.} =
     if gNotifyOn:
       mac_show_notification("Burn Complete!", "LightBurn has finished the job.")
     playAlert()
-    sendAlertEmail()
+    let (emailOk, emailErr) = sendAlertEmail()
+    if gEmailOn:
+      if emailOk:
+        mac_show_notification("Email Sent", "Alert email delivered successfully.")
+      else:
+        mac_show_notification("Email Failed", "Could not send alert: " & emailErr)
     mac_start_complete_timer()
 
 # Called when the complete timer fires (after completeSecs). Reverts to idle.
 proc nim_complete_revert() {.exportc.} =
   if gStatus == bsComplete:
     gStatus = bsIdle
+
+# Test-email result buffer — kept alive so the cstring pointer stays valid.
+var gEmailErrBuf: string
+
+proc nim_send_test_email(): cint {.exportc.} =
+  let (ok, err) = sendTestEmail()
+  gEmailErrBuf = err
+  result = cint(ok)
+
+proc nim_email_last_error(): cstring {.exportc.} =
+  gEmailErrBuf.cstring
 
 proc nim_toggle_sound()  {.exportc.} = gSoundOn  = not gSoundOn
 proc nim_toggle_notify() {.exportc.} = gNotifyOn = not gNotifyOn
