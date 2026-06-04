@@ -27,6 +27,9 @@ extern int    nim_get_status(void);
 extern int         nim_send_test_email(void);
 extern const char* nim_email_last_error(void);
 
+// ── Forward declarations for C API functions used inside @implementation ──────
+static void mac_show_notification(const char *title, const char *body);
+
 // ── Statics ───────────────────────────────────────────────────────────────────
 static NSStatusItem *gItem      = nil;
 static NSMenuItem   *gStatusHdr = nil;
