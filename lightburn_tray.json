@@ -1,0 +1,20 @@
+{
+  "lbHost":        "127.0.0.1",
+  "lbOutPort":     19840,
+  "lbInPort":      19841,
+  "pollSecs":      2.0,
+  "completeSecs":  8.0,
+  "recvTimeoutMs": 700,
+  "soundOn":       true,
+  "notifyOn":      true,
+  "emailOn":       false,
+  "smtp": {
+    "host":     "smtp.example.com",
+    "port":     587,
+    "useSsl":   false,
+    "username": "user@example.com",
+    "password": "your-password",
+    "fromAddr": "lightburn@example.com",
+    "toAddrs":  ["you@example.com"]
+  }
+}

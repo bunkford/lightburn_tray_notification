@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Windows system tray monitor for LightBurn laser software.
 #
-# - Polls LightBurn via UDP (ports 19840 / 19841) every 2 seconds
+# - Polls LightBurn via UDP (configurable ports) every N seconds
 # - Shows job status as a coloured dot in the system tray
 #   · Grey   = LightBurn unreachable
 #   · Green  = Idle (no active job)
@@ -10,7 +10,9 @@
 #   · Blue   = Job just completed
 # - Optionally plays a loud alert sound when a job finishes
 #   (place a "complete.wav" next to the .exe to use a custom sound)
-# - Right-click tray icon for menu (toggle sound / exit)
+# - Optionally sends an email notification when a job finishes
+# - Settings loaded from lightburn_tray.json in the application directory
+# - Right-click tray icon for menu (toggle sound / notifications / email / exit)
 # ─────────────────────────────────────────────────────────────────────────────
 
 when not defined(windows):
@@ -18,19 +20,89 @@ when not defined(windows):
 
 import wnim
 import winim/[winstr, utils]
-import winim/inc/[shellapi, winuser, windef, winbase, wingdi, mmsystem]
-import std/[net, strutils, os]
+import winim/inc/[shellapi, winuser, windef, wingdi, mmsystem]
+import std/[net, strutils, os, json, sequtils]
 import std/nativesockets as ns
+import smtp
 
-# ─── Configuration ────────────────────────────────────────────────────────────
-const
-  AppName        = "LightBurn Monitor"
-  LBHost         = "127.0.0.1"
-  LBOutPort      = 19840
-  LBInPort       = 19841
-  PollSecs       = 2.0          # status poll interval (seconds)
-  CompleteSecs   = 8.0          # how long to show "complete" icon before reverting
-  RecvTimeoutMs  = 700          # UDP receive timeout
+# ─── Application constant ─────────────────────────────────────────────────────
+const AppName = "LightBurn Monitor"
+
+# ─── Settings ─────────────────────────────────────────────────────────────────
+type
+  SmtpSettings = object
+    host:      string
+    port:      int
+    useSsl:    bool
+    username:  string
+    password:  string
+    fromAddr:  string
+    toAddrs:   seq[string]
+
+  Settings = object
+    lbHost:        string
+    lbOutPort:     int
+    lbInPort:      int
+    pollSecs:      float
+    completeSecs:  float
+    recvTimeoutMs: int
+    soundOn:       bool
+    notifyOn:      bool
+    emailOn:       bool
+    smtp:          SmtpSettings
+
+proc defaultSettings(): Settings =
+  Settings(
+    lbHost:        "127.0.0.1",
+    lbOutPort:     19840,
+    lbInPort:      19841,
+    pollSecs:      2.0,
+    completeSecs:  8.0,
+    recvTimeoutMs: 700,
+    soundOn:       true,
+    notifyOn:      true,
+    emailOn:       false,
+    smtp: SmtpSettings(
+      host:     "smtp.example.com",
+      port:     587,
+      useSsl:   false,
+      username: "",
+      password: "",
+      fromAddr: "lightburn@example.com",
+      toAddrs:  @[],
+    ),
+  )
+
+proc loadSettings(): Settings =
+  result = defaultSettings()
+  let path = getAppDir() / "lightburn_tray.json"
+  if not fileExists(path): return
+  try:
+    let j = parseFile(path)
+    result.lbHost        = j{"lbHost"}.getStr(result.lbHost)
+    result.lbOutPort     = j{"lbOutPort"}.getInt(result.lbOutPort)
+    result.lbInPort      = j{"lbInPort"}.getInt(result.lbInPort)
+    result.pollSecs      = j{"pollSecs"}.getFloat(result.pollSecs)
+    result.completeSecs  = j{"completeSecs"}.getFloat(result.completeSecs)
+    result.recvTimeoutMs = j{"recvTimeoutMs"}.getInt(result.recvTimeoutMs)
+    result.soundOn       = j{"soundOn"}.getBool(result.soundOn)
+    result.notifyOn      = j{"notifyOn"}.getBool(result.notifyOn)
+    result.emailOn       = j{"emailOn"}.getBool(result.emailOn)
+    let s = j{"smtp"}
+    if s != nil:
+      result.smtp.host     = s{"host"}.getStr(result.smtp.host)
+      result.smtp.port     = s{"port"}.getInt(result.smtp.port)
+      result.smtp.useSsl   = s{"useSsl"}.getBool(result.smtp.useSsl)
+      result.smtp.username = s{"username"}.getStr(result.smtp.username)
+      result.smtp.password = s{"password"}.getStr(result.smtp.password)
+      result.smtp.fromAddr = s{"fromAddr"}.getStr(result.smtp.fromAddr)
+      let ta = s{"toAddrs"}
+      if ta != nil and ta.kind == JArray:
+        result.smtp.toAddrs = @[]
+        for item in ta:
+          result.smtp.toAddrs.add(item.getStr())
+  except:
+    discard  # keep defaults on any parse error
 
 # ─── Win32 / tray identifiers ─────────────────────────────────────────────────
 const
@@ -40,6 +112,7 @@ const
   TIMER_COMPLETE = 2            # wnim timer ID for "complete" revert
   ID_SOUND       = 1001         # context-menu command IDs
   ID_NOTIFY      = 1003
+  ID_EMAIL       = 1004
   ID_EXIT        = 1002
 
 # ─── Status enum ──────────────────────────────────────────────────────────────
@@ -52,9 +125,11 @@ type
 
 # ─── Global state ─────────────────────────────────────────────────────────────
 var
+  gCfg:       Settings   = defaultSettings()
   gStatus:    BurnStatus = bsDisconnected
   gSoundOn:   bool       = true
   gNotifyOn:  bool       = true
+  gEmailOn:   bool       = false
   gFrame:    wFrame
   gNid:      NOTIFYICONDATAW
   gIcons:    array[BurnStatus, HICON]
@@ -185,15 +260,42 @@ proc playAlert() =
     # Fall back to the Windows "Exclamation" system sound
     discard PlaySoundW(newWideCString("SystemExclamation"), 0, SND_ALIAS or SND_ASYNC)
 
+# ─── Email ────────────────────────────────────────────────────────────────────
+proc sendAlertEmail() =
+  if not gEmailOn: return
+  let s = gCfg.smtp
+  if s.toAddrs.len == 0 or s.fromAddr == "": return
+  try:
+    let sender = createEmail(s.fromAddr)
+    let recipients = s.toAddrs.mapIt(createEmail(it))
+    let msg = createMessage(
+      "LightBurn Job Complete",
+      "LightBurn has finished the job.",
+      sender,
+      recipients)
+    let conn = newSmtp(useSsl = s.useSsl)
+    conn.connect(s.host, Port(s.port))
+    if not s.useSsl:
+      discard conn.ehlo()
+      if s.username != "":
+        conn.startTls()
+        discard conn.ehlo()
+    if s.username != "":
+      conn.auth(s.username, s.password)
+    conn.sendMail(s.fromAddr, s.toAddrs, $msg)
+    conn.close()
+  except:
+    discard  # silently ignore email errors
+
 # ─── UDP polling ──────────────────────────────────────────────────────────────
 proc initSockets() =
   gOutSock = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, buffered = false)
   gInSock  = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, buffered = false)
   gInSock.setSockOpt(OptReuseAddr, true)
-  gInSock.bindAddr(Port(LBInPort), "0.0.0.0")
+  gInSock.bindAddr(Port(gCfg.lbInPort), "0.0.0.0")
   # SO_RCVTIMEO (0x1006) on SOL_SOCKET (0xFFFF): millisecond DWORD on Windows.
   # Causes recvFrom to raise OSError after the timeout instead of blocking.
-  ns.setSockOptInt(gInSock.getFd(), 0xFFFF, 0x1006, RecvTimeoutMs)
+  ns.setSockOptInt(gInSock.getFd(), 0xFFFF, 0x1006, gCfg.recvTimeoutMs)
 
 proc closeSockets() =
   try: gOutSock.close() except: discard
@@ -206,7 +308,7 @@ proc pollLightBurn() =
 
   # Send STATUS request
   try:
-    gOutSock.sendTo(LBHost, Port(LBOutPort), "STATUS")
+    gOutSock.sendTo(gCfg.lbHost, Port(gCfg.lbOutPort), "STATUS")
   except:
     gStatus = bsDisconnected
     return
@@ -259,6 +361,13 @@ proc showContextMenu(hwnd: HWND) =
   let soundFlags = MF_STRING or (if gSoundOn: MF_CHECKED else: 0)
   AppendMenuW(hMenu, soundFlags.UINT, ID_SOUND.UINT_PTR,
               newWideCString(soundLabel))
+
+  # Email toggle with check mark
+  let emailLabel = if gEmailOn: "Email Alert: On" else: "Email Alert: Off"
+  let emailFlags = MF_STRING or (if gEmailOn: MF_CHECKED else: 0)
+  AppendMenuW(hMenu, emailFlags.UINT, ID_EMAIL.UINT_PTR,
+              newWideCString(emailLabel))
+
   AppendMenuW(hMenu, MF_SEPARATOR, 0, nil)
   AppendMenuW(hMenu, MF_STRING, ID_EXIT.UINT_PTR, newWideCString("Exit"))
 
@@ -270,17 +379,24 @@ proc showContextMenu(hwnd: HWND) =
   case cmd
   of ID_NOTIFY: gNotifyOn = not gNotifyOn
   of ID_SOUND:  gSoundOn  = not gSoundOn
+  of ID_EMAIL:  gEmailOn  = not gEmailOn
   of ID_EXIT:   gFrame.close()
   else: discard
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 when isMainModule:
+  # Load settings from JSON file in app directory
+  gCfg     = loadSettings()
+  gSoundOn  = gCfg.soundOn
+  gNotifyOn = gCfg.notifyOn
+  gEmailOn  = gCfg.emailOn
+
   # Bind UDP receive socket — fail fast if port is taken (another instance)
   try:
     initSockets()
   except OSError:
     discard MessageBoxW(0,
-      newWideCString("Could not bind UDP port " & $LBInPort &
+      newWideCString("Could not bind UDP port " & $gCfg.lbInPort &
                      ".\nIs another instance already running?"),
       newWideCString(AppName), MB_ICONERROR or MB_OK)
     quit(1)
@@ -323,8 +439,9 @@ when isMainModule:
           if gNotifyOn:
             showBalloon("Burn Complete!", "LightBurn has finished the job.")
           playAlert()
+          sendAlertEmail()
           # Schedule revert to idle after CompleteSecs seconds
-          gFrame.startTimer(CompleteSecs, TIMER_COMPLETE)
+          gFrame.startTimer(gCfg.completeSecs, TIMER_COMPLETE)
 
     elif tid == TIMER_COMPLETE:
       gFrame.stopTimer(TIMER_COMPLETE)
@@ -342,6 +459,6 @@ when isMainModule:
     event.skip()  # let default handler destroy the window and exit the loop
 
   # Start polling timer
-  gFrame.startTimer(PollSecs, TIMER_POLL)
+  gFrame.startTimer(gCfg.pollSecs, TIMER_POLL)
 
   app.mainLoop()
