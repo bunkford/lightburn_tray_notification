@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #import <Cocoa/Cocoa.h>
+#import <UserNotifications/UserNotifications.h>
 
 // ── Nim → ObjC: C functions exported from lightburn_tray_mac.nim ─────────────
 extern void   nim_poll_tick(void);
@@ -62,7 +63,7 @@ static NSImage* iconForStatus(int s) {
 
 // ── AppDelegate ───────────────────────────────────────────────────────────────
 @interface TrayDelegate : NSObject <NSApplicationDelegate,
-                                    NSUserNotificationCenterDelegate>
+                                    UNUserNotificationCenterDelegate>
 @property (strong) NSTimer *pollTimer;
 @property (strong) NSTimer *completeTimer;
 - (NSMenu *)buildMenu;
@@ -80,19 +81,26 @@ static NSImage* iconForStatus(int s) {
     gItem.button.toolTip = [NSString stringWithUTF8String:nim_status_label()];
     gItem.menu           = [self buildMenu];
 
-    // Be a notification centre delegate so alerts appear even without a dock entry
-    [NSUserNotificationCenter defaultUserNotificationCenter].delegate = self;
+    // Register as notification delegate and request permission.
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    center.delegate = self;
+    [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
+                          completionHandler:^(BOOL granted, NSError *error) {}];
 
-    // Poll timer
+    // Poll timer — nim_poll_tick() blocks for up to recvTimeoutMs waiting on the
+    // socket, so dispatch it off the main thread to keep the run loop responsive.
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:gPollSecs
                                                      repeats:YES
                                                        block:^(NSTimer *t) {
-        nim_poll_tick();
-        // After Nim updates gStatus, sync the icon / tooltip
-        gItem.button.image   = iconForStatus(nim_get_status());
-        gItem.button.toolTip = [NSString stringWithUTF8String:nim_status_label()];
-        if (gStatusHdr)
-            gStatusHdr.title = [NSString stringWithUTF8String:nim_status_label()];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            nim_poll_tick();
+            dispatch_async(dispatch_get_main_queue(), ^{
+                gItem.button.image   = iconForStatus(nim_get_status());
+                gItem.button.toolTip = [NSString stringWithUTF8String:nim_status_label()];
+                if (gStatusHdr)
+                    gStatusHdr.title = [NSString stringWithUTF8String:nim_status_label()];
+            });
+        });
     }];
 }
 
@@ -188,11 +196,14 @@ static NSImage* iconForStatus(int s) {
     self.completeTimer = nil;
 }
 
-// ── NSUserNotificationCenterDelegate ─────────────────────────────────────────
-// Allow notifications even when the app has no Dock presence.
-- (BOOL)userNotificationCenter:(NSUserNotificationCenter *)c
-     shouldPresentNotification:(NSUserNotification *)n {
-    return YES;
+// ── UNUserNotificationCenterDelegate ─────────────────────────────────────────
+// Allow banners to appear even while the app is active (menu-bar only apps are
+// always "in the foreground", so this is required to see any notification).
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+       willPresentNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
+    completionHandler(UNNotificationPresentationOptionBanner |
+                      UNNotificationPresentationOptionSound);
 }
 
 @end
@@ -218,11 +229,15 @@ void mac_run(void) {
 
 void mac_show_notification(const char *title, const char *body) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSUserNotification *n = [[NSUserNotification alloc] init];
-        n.title           = [NSString stringWithUTF8String:title];
-        n.informativeText = [NSString stringWithUTF8String:body];
-        [[NSUserNotificationCenter defaultUserNotificationCenter]
-            deliverNotification:n];
+        UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
+        content.title = [NSString stringWithUTF8String:title];
+        content.body  = [NSString stringWithUTF8String:body];
+        UNNotificationRequest *req = [UNNotificationRequest
+            requestWithIdentifier:[[NSUUID UUID] UUIDString]
+                          content:content
+                          trigger:nil];
+        [[UNUserNotificationCenter currentNotificationCenter]
+            addNotificationRequest:req withCompletionHandler:nil];
     });
 }
 

@@ -18,7 +18,7 @@ import std/[os, osproc]
 
 # ─── Link the ObjC helper and Cocoa framework ─────────────────────────────────
 {.compile: "lightburn_mac_helper.m".}
-{.passL: "-framework Cocoa -framework Foundation".}
+{.passL: "-framework Cocoa -framework Foundation -framework UserNotifications".}
 
 # ─── C API declared by lightburn_mac_helper.m ────────────────────────────────
 proc mac_setup(pollSecs, completeSecs: cdouble) {.importc.}
