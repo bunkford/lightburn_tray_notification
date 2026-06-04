@@ -5,67 +5,147 @@
 > This means any situation that causes LightBurn to report "not ready" (an open dialog, a prompt, a pause, framing mode, etc.) will look identical to an active burn job and may trigger a **false positive** completion notification when that condition clears.
 > If you are designing, framing, or otherwise using LightBurn without intending to run a job, use **Notifications: Off** from the tray menu to suppress balloon alerts while keeping the status-colour indicator active.
 
-A Windows system tray application that monitors [LightBurn](https://lightburnsoftware.com/) laser software via UDP and alerts you when a burn job completes.
+A cross-platform menu-bar / system-tray application that monitors [LightBurn](https://lightburnsoftware.com/) laser software via UDP and alerts you when a burn job completes. Supports **Windows** (system tray) and **macOS** (menu bar).
 
 ## Features
 
-- **Tray icon status** — colour-coded dot updates in real time:
+- **Status icon** — colour-coded dot updates in real time:
   | Colour | Meaning |
   |--------|---------|
   | Grey   | LightBurn unreachable / not running |
   | Green  | Connected, idle |
   | Orange | Burn job in progress |
   | Blue   | Job just completed |
-- **Completion alert** — Windows balloon notification + optional sound when a job finishes
-- **Custom sound** — drop a `complete.wav` next to the `.exe` for a custom alert; falls back to the Windows *Exclamation* system sound
-- **Right-click menu** — toggle sound on/off or exit
-- **Single instance** — fails fast if another copy is already running on the same UDP port
-- Windows-only (uses `Shell_NotifyIcon`, GDI, `winmm`)
-
-## Requirements
-
-- Windows 10/11
-- [LightBurn](https://lightburnsoftware.com/) installed and running with its UDP bridge enabled (default ports `19840`/`19841`)
-- [Nim](https://nim-lang.org/) + [wnim](https://github.com/khchen/wnim) (for building from source)
-
-## Building
-
-```powershell
-# From the lightburn_tray/ directory
-nim c --app:gui -o:lightburn_tray.exe lightburn_tray.nim
-```
-
-
-## Usage
-
-Run `lightburn_tray.exe` — it starts silently in the system tray with no window.
-
-| Action | Result |
-|--------|--------|
-| Right-click tray icon | Open context menu |
-| **Notifications: On/Off** | Toggle balloon alerts (icon colours still update) |
-| **Sound: On/Off** | Toggle completion alert sound |
-| **Exit** | Remove tray icon and quit |
-
-### Custom alert sound
-
-Place a file named `complete.wav` in the same directory as `lightburn_tray.exe`. Any standard PCM WAV file works. If the file is absent the Windows *Exclamation* system sound is used instead.
+- **Completion alert** — system notification when a job finishes (balloon on Windows, Notification Centre on macOS)
+- **Alert sound** — plays on job completion; drop a `complete.wav` next to the binary for a custom sound, otherwise falls back to the system default (*Exclamation* on Windows, *Glass* on macOS)
+- **Email alert** — optional SMTP email sent on job completion (configurable in `lightburn_tray.json`)
+- **Menu** — right-click (Windows) or click the dot (macOS) for a context menu:
+  - Toggle notifications on/off
+  - Toggle sound on/off
+  - Toggle email alert on/off
+  - Exit
+- **JSON configuration** — all settings read from `lightburn_tray.json` at startup; defaults apply if the file is absent
+- **Single instance guard** — fails fast if another copy is already bound to the same UDP port
 
 ## How it works
 
 1. Every **2 seconds** the app sends a `STATUS` UDP packet to LightBurn on port `19840` and reads the response on port `19841`.
-2. LightBurn responds with `!` while a job is running and `OK` when idle.
-3. When the response transitions from `!` to `OK` the app shows a balloon notification, plays the alert sound, and holds the blue "complete" icon for **8 seconds** before reverting to green (idle).
+2. LightBurn responds with `!` while a job is running and `OK` when idle/ready.
+3. When the response transitions from `!` → `OK` the app triggers the notification, plays the alert sound, sends an email (if configured), and holds the blue "complete" icon for **8 seconds** before reverting to green.
 
 ## Configuration
 
-All tuneable values are `const` at the top of `lightburn_tray.nim`:
+Settings are read from `lightburn_tray.json` placed next to the binary (or inside `Contents/Resources/` on macOS). All keys are optional — omitted values use the defaults shown below.
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `LBHost` | `127.0.0.1` | LightBurn host |
-| `LBOutPort` | `19840` | UDP command port |
-| `LBInPort` | `19841` | UDP response port |
-| `PollSecs` | `2.0` | Status poll interval (seconds) |
-| `CompleteSecs` | `8.0` | How long to show the "complete" icon |
-| `RecvTimeoutMs` | `700` | UDP receive timeout (milliseconds) |
+```json
+{
+  "lbHost":        "127.0.0.1",
+  "lbOutPort":     19840,
+  "lbInPort":      19841,
+  "pollSecs":      2.0,
+  "completeSecs":  8.0,
+  "recvTimeoutMs": 700,
+  "soundOn":       true,
+  "notifyOn":      true,
+  "emailOn":       false,
+  "smtp": {
+    "host":     "smtp.example.com",
+    "port":     587,
+    "useSsl":   false,
+    "username": "",
+    "password": "",
+    "fromAddr": "lightburn@example.com",
+    "toAddrs":  ["you@example.com"]
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `lbHost` | `127.0.0.1` | LightBurn host |
+| `lbOutPort` | `19840` | UDP command port |
+| `lbInPort` | `19841` | UDP response port |
+| `pollSecs` | `2.0` | Status poll interval (seconds) |
+| `completeSecs` | `8.0` | How long to hold the "complete" icon before reverting to idle |
+| `recvTimeoutMs` | `700` | UDP receive timeout (milliseconds) |
+| `soundOn` | `true` | Play alert sound on completion |
+| `notifyOn` | `true` | Show system notification on completion |
+| `emailOn` | `false` | Send email alert on completion |
+| `smtp.host` | — | SMTP server hostname |
+| `smtp.port` | `587` | SMTP port |
+| `smtp.useSsl` | `false` | Use SSL (true) or STARTTLS (false) |
+| `smtp.username` | — | SMTP login username |
+| `smtp.password` | — | SMTP login password |
+| `smtp.fromAddr` | — | Sender email address |
+| `smtp.toAddrs` | — | Array of recipient email addresses |
+
+### Custom alert sound
+
+Place a file named `complete.wav` next to the binary (or in `Contents/Resources/` on macOS). Any standard PCM WAV file works. If absent, the system default sound is used.
+
+---
+
+## Building
+
+### macOS
+
+**Requirements**
+
+- macOS 10.13+
+- [Nim](https://nim-lang.org/) (install via [choosenim](https://github.com/dom96/choosenim))
+- Xcode Command Line Tools (`xcode-select --install`)
+
+**Build**
+
+```sh
+bash build.sh
+```
+
+This compiles a release binary and packages it into `LightBurnMonitor.app`. The script also copies `lightburn_tray.json` and `complete.wav` (if present) into the bundle's `Contents/Resources/`.
+
+**Run**
+
+```sh
+open LightBurnMonitor.app
+```
+
+> [!IMPORTANT]
+> Always launch via `open` or double-click in Finder — **not** by running the binary directly from the terminal. macOS requires a proper `.app` bundle to grant menu-bar (window server) access. `LSUIElement = YES` in `Info.plist` keeps it out of the Dock and app switcher.
+
+The settings file and sound file are looked up from:
+- `Contents/Resources/lightburn_tray.json`
+- `Contents/Resources/complete.wav`
+
+---
+
+### Windows
+
+**Requirements**
+
+- Windows 10/11
+- [Nim](https://nim-lang.org/)
+- [wnim](https://github.com/khchen/wnim) (`nimble install wnim`)
+
+**Build**
+
+```powershell
+nim c -d:ssl lightburn_tray.nim
+```
+
+This produces `lightburn_tray.exe`. Place `lightburn_tray.json` and `complete.wav` in the same directory as the `.exe`.
+
+**Run**
+
+Double-click `lightburn_tray.exe` — it starts silently with no window and appears in the system tray.
+
+---
+
+## Usage
+
+| Action | Result |
+|--------|--------|
+| Click / right-click tray icon | Open context menu |
+| **Notifications: On/Off** | Toggle system notifications (icon colours still update) |
+| **Sound: On/Off** | Toggle completion alert sound |
+| **Email Alert: On/Off** | Toggle email notification |
+| **Exit** | Remove icon and quit |
