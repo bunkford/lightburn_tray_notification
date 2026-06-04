@@ -10,4 +10,3 @@ bin           = @["lightburn_tray", "lightburn_tray_mac"]
 requires "nim >= 2.2.10"
 requires "https://github.com/bunkford/wNim"
 requires "smtp"
-
