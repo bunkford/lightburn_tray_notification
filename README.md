@@ -1,5 +1,10 @@
 # LightBurn Tray Monitor
 
+> [!WARNING]
+> **LightBurn only reports whether it is *ready to burn* or not — it does not expose a dedicated "currently burning" state.**
+> This means any situation that causes LightBurn to report "not ready" (an open dialog, a prompt, a pause, framing mode, etc.) will look identical to an active burn job and may trigger a **false positive** completion notification when that condition clears.
+> If you are designing, framing, or otherwise using LightBurn without intending to run a job, use **Notifications: Off** from the tray menu to suppress balloon alerts while keeping the status-colour indicator active.
+
 A Windows system tray application that monitors [LightBurn](https://lightburnsoftware.com/) laser software via UDP and alerts you when a burn job completes.
 
 ## Features
@@ -43,6 +48,7 @@ Run `lightburn_tray.exe` — it starts silently in the system tray with no windo
 | Action | Result |
 |--------|--------|
 | Right-click tray icon | Open context menu |
+| **Notifications: On/Off** | Toggle balloon alerts (icon colours still update) |
 | **Sound: On/Off** | Toggle completion alert sound |
 | **Exit** | Remove tray icon and quit |
 

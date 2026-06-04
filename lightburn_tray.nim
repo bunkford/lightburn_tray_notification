@@ -39,6 +39,7 @@ const
   TIMER_POLL     = 1            # wnim timer ID for UDP polling
   TIMER_COMPLETE = 2            # wnim timer ID for "complete" revert
   ID_SOUND       = 1001         # context-menu command IDs
+  ID_NOTIFY      = 1003
   ID_EXIT        = 1002
 
 # ─── Status enum ──────────────────────────────────────────────────────────────
@@ -51,8 +52,9 @@ type
 
 # ─── Global state ─────────────────────────────────────────────────────────────
 var
-  gStatus:   BurnStatus = bsDisconnected
-  gSoundOn:  bool       = true
+  gStatus:    BurnStatus = bsDisconnected
+  gSoundOn:   bool       = true
+  gNotifyOn:  bool       = true
   gFrame:    wFrame
   gNid:      NOTIFYICONDATAW
   gIcons:    array[BurnStatus, HICON]
@@ -246,6 +248,12 @@ proc showContextMenu(hwnd: HWND) =
               newWideCString(statusLabel(gStatus)))
   AppendMenuW(hMenu, MF_SEPARATOR, 0, nil)
 
+  # Notifications toggle with check mark
+  let notifyLabel = if gNotifyOn: "Notifications: On" else: "Notifications: Off"
+  let notifyFlags = MF_STRING or (if gNotifyOn: MF_CHECKED else: 0)
+  AppendMenuW(hMenu, notifyFlags.UINT, ID_NOTIFY.UINT_PTR,
+              newWideCString(notifyLabel))
+
   # Sound toggle with check mark
   let soundLabel = if gSoundOn: "Sound: On" else: "Sound: Off"
   let soundFlags = MF_STRING or (if gSoundOn: MF_CHECKED else: 0)
@@ -260,8 +268,9 @@ proc showContextMenu(hwnd: HWND) =
   DestroyMenu(hMenu)
 
   case cmd
-  of ID_SOUND: gSoundOn = not gSoundOn
-  of ID_EXIT:  gFrame.close()
+  of ID_NOTIFY: gNotifyOn = not gNotifyOn
+  of ID_SOUND:  gSoundOn  = not gSoundOn
+  of ID_EXIT:   gFrame.close()
   else: discard
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -311,7 +320,8 @@ when isMainModule:
       if gStatus != prev:
         updateTrayIcon()
         if gStatus == bsComplete:
-          showBalloon("Burn Complete!", "LightBurn has finished the job.")
+          if gNotifyOn:
+            showBalloon("Burn Complete!", "LightBurn has finished the job.")
           playAlert()
           # Schedule revert to idle after CompleteSecs seconds
           gFrame.startTimer(CompleteSecs, TIMER_COMPLETE)
