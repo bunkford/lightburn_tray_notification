@@ -13,128 +13,36 @@
 # - Optionally sends an email notification when a job finishes
 # - Settings loaded from lightburn_tray.json in the application directory
 # - Right-click tray icon for menu (toggle sound / notifications / email / exit)
+#
+# Compile:  nim c -d:ssl lightburn_tray.nim
+# macOS:    see lightburn_tray_mac.nim
 # ─────────────────────────────────────────────────────────────────────────────
 
 when not defined(windows):
-  {.error: "lightburn_tray is a Windows-only application."}
+  {.error: "lightburn_tray is Windows-only. For macOS use: nim c -d:ssl lightburn_tray_mac.nim"}
 
+import ./lightburn_shared
+import std/os
 import wnim
 import winim/[winstr, utils]
 import winim/inc/[shellapi, winuser, windef, wingdi, mmsystem]
-import std/[net, strutils, os, json, sequtils]
-import std/nativesockets as ns
-import smtp
-
-# ─── Application constant ─────────────────────────────────────────────────────
-const AppName = "LightBurn Monitor"
-
-# ─── Settings ─────────────────────────────────────────────────────────────────
-type
-  SmtpSettings = object
-    host:      string
-    port:      int
-    useSsl:    bool
-    username:  string
-    password:  string
-    fromAddr:  string
-    toAddrs:   seq[string]
-
-  Settings = object
-    lbHost:        string
-    lbOutPort:     int
-    lbInPort:      int
-    pollSecs:      float
-    completeSecs:  float
-    recvTimeoutMs: int
-    soundOn:       bool
-    notifyOn:      bool
-    emailOn:       bool
-    smtp:          SmtpSettings
-
-proc defaultSettings(): Settings =
-  Settings(
-    lbHost:        "127.0.0.1",
-    lbOutPort:     19840,
-    lbInPort:      19841,
-    pollSecs:      2.0,
-    completeSecs:  8.0,
-    recvTimeoutMs: 700,
-    soundOn:       true,
-    notifyOn:      true,
-    emailOn:       false,
-    smtp: SmtpSettings(
-      host:     "smtp.example.com",
-      port:     587,
-      useSsl:   false,
-      username: "",
-      password: "",
-      fromAddr: "lightburn@example.com",
-      toAddrs:  @[],
-    ),
-  )
-
-proc loadSettings(): Settings =
-  result = defaultSettings()
-  let path = getAppDir() / "lightburn_tray.json"
-  if not fileExists(path): return
-  try:
-    let j = parseFile(path)
-    result.lbHost        = j{"lbHost"}.getStr(result.lbHost)
-    result.lbOutPort     = j{"lbOutPort"}.getInt(result.lbOutPort)
-    result.lbInPort      = j{"lbInPort"}.getInt(result.lbInPort)
-    result.pollSecs      = j{"pollSecs"}.getFloat(result.pollSecs)
-    result.completeSecs  = j{"completeSecs"}.getFloat(result.completeSecs)
-    result.recvTimeoutMs = j{"recvTimeoutMs"}.getInt(result.recvTimeoutMs)
-    result.soundOn       = j{"soundOn"}.getBool(result.soundOn)
-    result.notifyOn      = j{"notifyOn"}.getBool(result.notifyOn)
-    result.emailOn       = j{"emailOn"}.getBool(result.emailOn)
-    let s = j{"smtp"}
-    if s != nil:
-      result.smtp.host     = s{"host"}.getStr(result.smtp.host)
-      result.smtp.port     = s{"port"}.getInt(result.smtp.port)
-      result.smtp.useSsl   = s{"useSsl"}.getBool(result.smtp.useSsl)
-      result.smtp.username = s{"username"}.getStr(result.smtp.username)
-      result.smtp.password = s{"password"}.getStr(result.smtp.password)
-      result.smtp.fromAddr = s{"fromAddr"}.getStr(result.smtp.fromAddr)
-      let ta = s{"toAddrs"}
-      if ta != nil and ta.kind == JArray:
-        result.smtp.toAddrs = @[]
-        for item in ta:
-          result.smtp.toAddrs.add(item.getStr())
-  except:
-    discard  # keep defaults on any parse error
 
 # ─── Win32 / tray identifiers ─────────────────────────────────────────────────
 const
-  WM_TRAYICON    = WM_APP + 1   # tray callback message
+  WM_TRAYICON    = WM_APP + 1
   TRAY_UID       = 1
-  TIMER_POLL     = 1            # wnim timer ID for UDP polling
-  TIMER_COMPLETE = 2            # wnim timer ID for "complete" revert
-  ID_SOUND       = 1001         # context-menu command IDs
+  TIMER_POLL     = 1
+  TIMER_COMPLETE = 2
+  ID_SOUND       = 1001
   ID_NOTIFY      = 1003
   ID_EMAIL       = 1004
   ID_EXIT        = 1002
 
-# ─── Status enum ──────────────────────────────────────────────────────────────
-type
-  BurnStatus = enum
-    bsDisconnected   ## LightBurn unreachable or not running
-    bsIdle           ## Connected, no active job
-    bsBurning        ## Job in progress
-    bsComplete       ## Job just finished (transient, reverts after CompleteSecs)
-
-# ─── Global state ─────────────────────────────────────────────────────────────
+# ─── Windows-only extra state ─────────────────────────────────────────────────
 var
-  gCfg:       Settings   = defaultSettings()
-  gStatus:    BurnStatus = bsDisconnected
-  gSoundOn:   bool       = true
-  gNotifyOn:  bool       = true
-  gEmailOn:   bool       = false
-  gFrame:    wFrame
-  gNid:      NOTIFYICONDATAW
-  gIcons:    array[BurnStatus, HICON]
-  gOutSock:  Socket
-  gInSock:   Socket
+  gFrame: wFrame
+  gNid:   NOTIFYICONDATAW
+  gIcons: array[BurnStatus, HICON]
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 proc setWcharArray[N: static int](arr: var array[N, WCHAR], s: string) =
@@ -213,13 +121,6 @@ proc destroyIcons() =
       DestroyIcon(gIcons[st])
 
 # ─── Tray icon management ─────────────────────────────────────────────────────
-proc statusLabel(s: BurnStatus): string =
-  case s
-  of bsDisconnected: AppName & " — not connected"
-  of bsIdle:         AppName & " — idle"
-  of bsBurning:      AppName & " — burning..."
-  of bsComplete:     AppName & " — job complete!"
-
 proc updateTrayIcon() =
   gNid.uFlags = NIF_ICON or NIF_TIP
   gNid.hIcon  = gIcons[gStatus]
@@ -259,82 +160,6 @@ proc playAlert() =
   else:
     # Fall back to the Windows "Exclamation" system sound
     discard PlaySoundW(newWideCString("SystemExclamation"), 0, SND_ALIAS or SND_ASYNC)
-
-# ─── Email ────────────────────────────────────────────────────────────────────
-proc sendAlertEmail() =
-  if not gEmailOn: return
-  let s = gCfg.smtp
-  if s.toAddrs.len == 0 or s.fromAddr == "": return
-  try:
-    let sender = createEmail(s.fromAddr)
-    let recipients = s.toAddrs.mapIt(createEmail(it))
-    let msg = createMessage(
-      "LightBurn Job Complete",
-      "LightBurn has finished the job.",
-      sender,
-      recipients)
-    let conn = newSmtp(useSsl = s.useSsl)
-    conn.connect(s.host, Port(s.port))
-    if not s.useSsl:
-      discard conn.ehlo()
-      if s.username != "":
-        conn.startTls()
-        discard conn.ehlo()
-    if s.username != "":
-      conn.auth(s.username, s.password)
-    conn.sendMail(s.fromAddr, s.toAddrs, $msg)
-    conn.close()
-  except:
-    discard  # silently ignore email errors
-
-# ─── UDP polling ──────────────────────────────────────────────────────────────
-proc initSockets() =
-  gOutSock = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, buffered = false)
-  gInSock  = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, buffered = false)
-  gInSock.setSockOpt(OptReuseAddr, true)
-  gInSock.bindAddr(Port(gCfg.lbInPort), "0.0.0.0")
-  # SO_RCVTIMEO (0x1006) on SOL_SOCKET (0xFFFF): millisecond DWORD on Windows.
-  # Causes recvFrom to raise OSError after the timeout instead of blocking.
-  ns.setSockOptInt(gInSock.getFd(), 0xFFFF, 0x1006, gCfg.recvTimeoutMs)
-
-proc closeSockets() =
-  try: gOutSock.close() except: discard
-  try: gInSock.close()  except: discard
-
-proc pollLightBurn() =
-  ## Send STATUS to LightBurn and parse the response.
-  ## Updates gStatus in-place.
-  let oldStatus = gStatus
-
-  # Send STATUS request
-  try:
-    gOutSock.sendTo(gCfg.lbHost, Port(gCfg.lbOutPort), "STATUS")
-  except:
-    gStatus = bsDisconnected
-    return
-
-  # Receive response — recvFrom will time out via SO_RCVTIMEO set in initSockets.
-  var data   = newString(256)
-  var sender = ""
-  var port   = Port(0)
-  let n = try: gInSock.recvFrom(data, 256, sender, port)
-          except: (gStatus = bsDisconnected; return)
-  if n <= 0:
-    gStatus = bsDisconnected
-    return
-  data.setLen(n)
-
-  # Parse: "OK" = idle, "!" without "OK" = burning, else disconnected
-  if "OK" in data:
-    if oldStatus == bsBurning:
-      gStatus = bsComplete   # job finished — caller will react
-    elif oldStatus != bsComplete:
-      gStatus = bsIdle       # already idle or reconnected
-    # if oldStatus == bsComplete we leave it alone; TIMER_COMPLETE will revert it
-  elif "!" in data:
-    gStatus = bsBurning
-  else:
-    gStatus = bsDisconnected
 
 # ─── Right-click context menu ─────────────────────────────────────────────────
 proc showContextMenu(hwnd: HWND) =
