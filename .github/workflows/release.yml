@@ -30,7 +30,7 @@ jobs:
         run: nimble install wnim -y
 
       - name: Build lightburn_tray.exe
-        run: nim c -d:ssl -d:release lightburn_tray.nim
+        run: nim c -d:ssl -d:release --app:gui lightburn_tray.nim
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

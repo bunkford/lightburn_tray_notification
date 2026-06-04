@@ -21,6 +21,9 @@
 when not defined(windows):
   {.error: "lightburn_tray is Windows-only. For macOS use: nim c -d:ssl lightburn_tray_mac.nim"}
 
+# GUI subsystem — suppresses the console window on Windows.
+{.passL: "-mwindows".}
+
 import ./lightburn_shared
 import std/os
 import wnim
