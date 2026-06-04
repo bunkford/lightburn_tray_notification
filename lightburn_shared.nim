@@ -7,6 +7,8 @@
 import std/[net, strutils, os, json, sequtils]
 import std/nativesockets as ns
 import smtp
+when not defined(windows):
+  import posix
 
 const AppName* = "LightBurn Monitor"
 
@@ -148,7 +150,6 @@ proc initSockets*() =
   when defined(windows):
     ns.setSockOptInt(gInSock.getFd(), 0xFFFF, 0x1006, gCfg.recvTimeoutMs)
   else:
-    import posix
     var tv = Timeval(
       tv_sec:  Time(gCfg.recvTimeoutMs div 1000),
       tv_usec: Suseconds((gCfg.recvTimeoutMs mod 1000) * 1000))
