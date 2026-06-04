@@ -142,8 +142,8 @@ proc sendAlertEmail*() =
 
 # ─── UDP sockets ──────────────────────────────────────────────────────────────
 proc initSockets*() =
-  gOutSock = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, buffered = false)
-  gInSock  = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, buffered = false)
+  gOutSock = newSocket(Domain.AF_INET, SockType.SOCK_DGRAM, IPPROTO_UDP, buffered = false)
+  gInSock  = newSocket(Domain.AF_INET, SockType.SOCK_DGRAM, IPPROTO_UDP, buffered = false)
   gInSock.setSockOpt(OptReuseAddr, true)
   gInSock.bindAddr(Port(gCfg.lbInPort), "0.0.0.0")
   # Set receive timeout — format differs between Windows (DWORD ms) and POSIX (timeval).

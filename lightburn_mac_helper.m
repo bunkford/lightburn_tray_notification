@@ -33,18 +33,20 @@ static NSMenuItem   *gEmailItem = nil;
 static double gPollSecs         = 2.0;
 static double gCompleteSecs     = 8.0;
 
-// ── Coloured dot icon (18×18 PNG-style NSImage) ───────────────────────────────
+// ── Coloured dot icon (18×18 NSImage) ────────────────────────────────────────
 static NSImage* dotImage(CGFloat r, CGFloat g, CGFloat b) {
-    NSImage *img = [NSImage imageWithSize:NSMakeSize(18, 18)
-                                  flipped:NO
-                           drawingHandler:^BOOL(NSRect rect) {
-        CGContextRef ctx = [[NSGraphicsContext currentContext] CGContext];
-        CGContextSetRGBFillColor(ctx, r, g, b, 1.0);
-        CGRect inner = CGRectInset(NSRectToCGRect(rect), 1.5, 1.5);
-        CGContextFillEllipseInRect(ctx, inner);
-        return YES;
-    }];
-    img.template = NO;   // don't let macOS recolour it
+    int sz = 18;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(NULL, sz, sz, 8, 0, cs,
+                           kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(cs);
+    CGContextSetRGBFillColor(ctx, r, g, b, 1.0);
+    CGContextFillEllipseInRect(ctx, CGRectMake(1.5, 1.5, sz - 3.0, sz - 3.0));
+    CGImageRef cg = CGBitmapContextCreateImage(ctx);
+    CGContextRelease(ctx);
+    NSImage *img = [[NSImage alloc] initWithCGImage:cg size:NSMakeSize(sz, sz)];
+    CGImageRelease(cg);
+    img.template = NO;
     return img;
 }
 
@@ -71,9 +73,9 @@ static NSImage* iconForStatus(int s) {
 @implementation TrayDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
-    // Build the status-bar item
-    gItem = [[NSStatusBar systemStatusBar]
-              statusItemWithLength:NSSquareStatusItemLength];
+    // Build the status-bar item — retain explicitly (MRC: statusItemWithLength returns autoreleased)
+    gItem = [[[NSStatusBar systemStatusBar]
+              statusItemWithLength:NSSquareStatusItemLength] retain];
     gItem.button.image   = iconForStatus(nim_get_status());
     gItem.button.toolTip = [NSString stringWithUTF8String:nim_status_label()];
     gItem.menu           = [self buildMenu];
@@ -82,7 +84,6 @@ static NSImage* iconForStatus(int s) {
     [NSUserNotificationCenter defaultUserNotificationCenter].delegate = self;
 
     // Poll timer
-    __weak typeof(self) weak = self;
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:gPollSecs
                                                      repeats:YES
                                                        block:^(NSTimer *t) {
@@ -93,7 +94,6 @@ static NSImage* iconForStatus(int s) {
         if (gStatusHdr)
             gStatusHdr.title = [NSString stringWithUTF8String:nim_status_label()];
     }];
-    (void)weak; // suppress unused warning
 }
 
 - (NSMenu *)buildMenu {

@@ -1,0 +1,9 @@
+# Build output
+lightburn_tray_mac
+lightburn_tray.exe
+
+# macOS app bundle (built by build.sh)
+LightBurnMonitor.app/
+
+# Nim cache
+nimcache/
