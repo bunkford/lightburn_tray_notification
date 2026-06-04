@@ -32,14 +32,9 @@ A Windows system tray application that monitors [LightBurn](https://lightburnsof
 
 ```powershell
 # From the lightburn_tray/ directory
-nim c --app:gui -d:mingw -o:lightburn_tray.exe lightburn_tray.nim
+nim c --app:gui -o:lightburn_tray.exe lightburn_tray.nim
 ```
 
-Or from the project root:
-
-```powershell
-nim c --app:gui -d:mingw -o:lightburn_tray/lightburn_tray.exe lightburn_tray/lightburn_tray.nim
-```
 
 ## Usage
 
