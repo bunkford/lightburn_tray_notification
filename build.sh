@@ -51,6 +51,13 @@ cp Info.plist            "$APP/Contents/"
 [ -f complete.wav ]        && cp complete.wav         "$RESOURCES/"
 [ -f lightburn_tray.json ] && cp lightburn_tray.json "$RESOURCES/"
 
+# ── Ad-hoc code sign ──────────────────────────────────────────────────────────
+# macOS Sequoia silently rejects UNUserNotificationCenter requests from unsigned
+# apps even when the user has granted permission in System Settings.
+# Ad-hoc signing (-s -) satisfies the OS without requiring an Apple Developer account.
+echo "==> Signing (ad-hoc)..."
+codesign --sign - --force --deep --preserve-metadata=entitlements "$APP"
+
 echo "==> Done. Run with:"
 echo "    open $APP"
 echo "  or:"

@@ -49,7 +49,7 @@ jobs:
 
   build-macos-arm:
     name: Build macOS (Apple Silicon)
-    runs-on: macos-latest   # ARM (M-series) runner
+    runs-on: macos-15       # ARM (M-series) runner (explicit macOS 15)
     env:
       MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
@@ -80,7 +80,7 @@ jobs:
 
   build-macos-intel:
     name: Build macOS (Intel)
-    runs-on: macos-13       # Last Intel (x86_64) runner on GitHub Actions
+    runs-on: macos-15-intel # Intel (x86_64) runner label (use macos-15-intel)
     env:
       MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
