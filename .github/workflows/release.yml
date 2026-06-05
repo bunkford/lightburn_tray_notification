@@ -27,11 +27,7 @@ jobs:
           nim-version: 'stable'
 
       - name: Install Nim dependencies
-        run: |
-          nimble install smtp -y || nimble install -y
-
-      - name: Install wnim
-        run: nimble install wnim -y
+        run: nimble install -d -y
 
       - name: Install Pillow (icon generation)
         run: pip install --quiet Pillow
@@ -68,6 +64,9 @@ jobs:
 
       - name: Install Pillow (icon generation)
         run: pip3 install --quiet --break-system-packages Pillow
+
+      - name: Install Nim dependencies
+        run: nimble install -d -y
 
       - name: Build and bundle
         run: bash build.sh

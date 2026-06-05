@@ -8,7 +8,7 @@
     <key>CFBundleIdentifier</key>
     <string>com.lightburn.monitor</string>
     <key>CFBundleVersion</key>
-    <string>1.1.0</string>
+    <string>1.2.0</string>
     <key>CFBundleExecutable</key>
     <string>lightburn_tray_mac</string>
     <key>CFBundlePackageType</key>
