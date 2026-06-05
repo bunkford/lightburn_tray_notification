@@ -26,6 +26,10 @@ jobs:
         with:
           nim-version: 'stable'
 
+      - name: Install Nim dependencies
+        run: |
+          nimble install smtp -y || nimble install -y
+
       - name: Install wnim
         run: nimble install wnim -y
 
