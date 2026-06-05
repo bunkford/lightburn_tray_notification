@@ -29,6 +29,15 @@ jobs:
       - name: Install wnim
         run: nimble install wnim -y
 
+      - name: Install Pillow (icon generation)
+        run: pip install --quiet Pillow
+
+      - name: Generate AppIcon.ico
+        run: python make_icon.py
+
+      - name: Compile Windows resource (icon)
+        run: windres lightburn_tray.rc lightburn_tray.o
+
       - name: Build lightburn_tray.exe
         run: nim c -d:ssl -d:release --app:gui lightburn_tray.nim
 

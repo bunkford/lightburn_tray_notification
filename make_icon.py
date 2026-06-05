@@ -26,9 +26,8 @@ except ImportError:
     _install_pillow()
     from PIL import Image, ImageDraw, ImageFilter
 
-# (pixel_size, [iconset_filename, ...])
-# Each rendered size maps to one or two iconset filenames (1x and @2x variants).
-SIZE_MAP = [
+# Sizes for macOS .icns (iconset filenames at 1x and @2x)
+ICNS_SIZE_MAP = [
     (16,   ["icon_16x16.png"]),
     (32,   ["icon_32x32.png",  "icon_16x16@2x.png"]),
     (64,   ["icon_32x32@2x.png"]),
@@ -37,6 +36,11 @@ SIZE_MAP = [
     (512,  ["icon_512x512.png", "icon_256x256@2x.png"]),
     (1024, ["icon_512x512@2x.png"]),
 ]
+
+# Sizes baked into the Windows .ico (Explorer, taskbar, title bar, Alt+Tab).
+# Frames > 256 px are stored as PNG inside the ICO container (Vista+ compatible)
+# and are used by Windows 10/11 when displaying large app thumbnails.
+ICO_SIZES = [16, 24, 32, 48, 64, 128, 256, 512]
 
 
 def draw_icon(size: int) -> "Image.Image":
@@ -120,13 +124,32 @@ def draw_icon(size: int) -> "Image.Image":
 
 
 def main():
+    import platform
     root    = os.path.dirname(os.path.abspath(__file__))
-    iconset = os.path.join(root, "AppIcon.iconset")
     icns    = os.path.join(root, "AppIcon.icns")
+    ico     = os.path.join(root, "AppIcon.ico")
+
+    # ── Windows .ico (Pillow native, works on every OS) ───────────────────
+    print("==> Generating AppIcon.ico...")
+    ico_images = [draw_icon(sz) for sz in ICO_SIZES]
+    # Pillow writes a proper multi-size .ico when given a list of sizes
+    ico_images[0].save(
+        ico, format="ICO",
+        sizes=[(sz, sz) for sz in ICO_SIZES],
+        append_images=ico_images[1:],
+    )
+    print(f"    sizes: {ICO_SIZES}")
+
+    # ── macOS .icns (requires iconutil, macOS only) ───────────────────────
+    if platform.system() != "Darwin":
+        print("==> Skipping AppIcon.icns (not macOS).")
+        return
+
+    iconset = os.path.join(root, "AppIcon.iconset")
     os.makedirs(iconset, exist_ok=True)
 
-    print("==> Generating icon sizes...")
-    for px_size, names in SIZE_MAP:
+    print("==> Generating AppIcon.icns iconset...")
+    for px_size, names in ICNS_SIZE_MAP:
         rendered = draw_icon(px_size)
         for name in names:
             rendered.save(os.path.join(iconset, name), "PNG")

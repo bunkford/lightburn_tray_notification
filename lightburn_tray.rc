@@ -1,0 +1,7 @@
+// lightburn_tray.rc — Windows resource script
+// Compiled by the build step:  windres lightburn_tray.rc lightburn_tray.o
+// Then linked via {.link: "lightburn_tray.o".} in lightburn_tray.nim.
+//
+// Resource ID 1 is the "application icon" that Windows uses in Explorer,
+// the taskbar, Alt+Tab, and the EXE file thumbnail.
+1 ICON "AppIcon.ico"

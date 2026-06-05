@@ -24,6 +24,10 @@ when not defined(windows):
 # GUI subsystem — suppresses the console window on Windows.
 {.passL: "-mwindows".}
 
+# Embed the application icon (AppIcon.ico compiled to lightburn_tray.o by windres).
+# The build step runs: windres lightburn_tray.rc lightburn_tray.o
+{.link: "lightburn_tray.o".}
+
 import ./lightburn_shared
 import std/os
 import wnim
