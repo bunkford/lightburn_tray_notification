@@ -47,12 +47,10 @@ jobs:
           name: windows
           path: lightburn_tray.exe
 
-  build-macos:
-    name: Build macOS
-    runs-on: macos-latest
+  build-macos-arm:
+    name: Build macOS (Apple Silicon)
+    runs-on: macos-latest   # ARM (M-series) runner
     env:
-      # Pin the deployment target so the binary runs on Monterey (12) and later,
-      # regardless of which OS version the GitHub Actions runner uses.
       MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
       - uses: actions/checkout@v4
@@ -62,27 +60,58 @@ jobs:
         with:
           nim-version: 'stable'
 
-      - name: Install Pillow (icon generation)
-        run: pip3 install --quiet --break-system-packages Pillow
-
       - name: Install Nim dependencies
         run: nimble install -d -y
+
+      - name: Install Pillow (icon generation)
+        run: pip3 install --quiet --break-system-packages Pillow
 
       - name: Build and bundle
         run: bash build.sh
 
       - name: Zip app bundle
-        run: zip -r LightBurnMonitor.app.zip LightBurnMonitor.app
+        run: zip -r LightBurnMonitor-arm64.app.zip LightBurnMonitor.app
 
-      - name: Upload macOS artifact
+      - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos
-          path: LightBurnMonitor.app.zip
+          name: macos-arm64
+          path: LightBurnMonitor-arm64.app.zip
+
+  build-macos-intel:
+    name: Build macOS (Intel)
+    runs-on: macos-13       # Last Intel (x86_64) runner on GitHub Actions
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: 'stable'
+
+      - name: Install Nim dependencies
+        run: nimble install -d -y
+
+      - name: Install Pillow (icon generation)
+        run: pip3 install --quiet --break-system-packages Pillow
+
+      - name: Build and bundle
+        run: bash build.sh
+
+      - name: Zip app bundle
+        run: zip -r LightBurnMonitor-x86_64.app.zip LightBurnMonitor.app
+
+      - name: Upload macOS x86_64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x86_64
+          path: LightBurnMonitor-x86_64.app.zip
 
   release:
     name: Create GitHub Release
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos-arm, build-macos-intel]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -106,4 +135,5 @@ jobs:
           generate_release_notes: true
           files: |
             windows/lightburn_tray.exe
-            macos/LightBurnMonitor.app.zip
+            macos-arm64/LightBurnMonitor-arm64.app.zip
+            macos-x86_64/LightBurnMonitor-x86_64.app.zip
