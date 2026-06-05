@@ -41,6 +41,10 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-latest
+    env:
+      # Pin the deployment target so the binary runs on Monterey (12) and later,
+      # regardless of which OS version the GitHub Actions runner uses.
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +52,9 @@ jobs:
         uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: 'stable'
+
+      - name: Install Pillow (icon generation)
+        run: pip3 install --quiet --break-system-packages Pillow
 
       - name: Build and bundle
         run: bash build.sh

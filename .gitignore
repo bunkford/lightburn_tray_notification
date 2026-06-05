@@ -5,6 +5,10 @@ lightburn_tray.exe
 # macOS app bundle (built by build.sh)
 LightBurnMonitor.app/
 
+# Generated icon (rebuilt by make_icon.py / build.sh)
+AppIcon.icns
+AppIcon.iconset/
+
 # Nim cache
 nimcache/
 
