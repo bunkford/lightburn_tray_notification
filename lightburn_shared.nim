@@ -161,6 +161,33 @@ proc sendTestEmail*(): tuple[ok: bool, err: string] =
   ## Send a test email to verify SMTP settings (ignores gEmailOn).
   smtpSend("LightBurn Monitor — Test", "Email settings are working correctly.")
 
+proc saveSettings*(s: Settings) =
+  ## Persist the given settings back to lightburn_tray.json.
+  let path = resourceDir() / "lightburn_tray.json"
+  var j = newJObject()
+  j["lbHost"]        = newJString(s.lbHost)
+  j["lbOutPort"]     = newJInt(s.lbOutPort)
+  j["lbInPort"]      = newJInt(s.lbInPort)
+  j["pollSecs"]      = newJFloat(s.pollSecs)
+  j["completeSecs"]  = newJFloat(s.completeSecs)
+  j["recvTimeoutMs"] = newJInt(s.recvTimeoutMs)
+  j["soundOn"]       = newJBool(s.soundOn)
+  j["notifyOn"]      = newJBool(s.notifyOn)
+  j["emailOn"]       = newJBool(s.emailOn)
+  var smtp = newJObject()
+  smtp["host"]     = newJString(s.smtp.host)
+  smtp["port"]     = newJInt(s.smtp.port)
+  smtp["useSsl"]   = newJBool(s.smtp.useSsl)
+  smtp["username"] = newJString(s.smtp.username)
+  smtp["password"] = newJString(s.smtp.password)
+  smtp["fromAddr"] = newJString(s.smtp.fromAddr)
+  var toArr = newJArray()
+  for a in s.smtp.toAddrs: toArr.add(newJString(a))
+  smtp["toAddrs"]  = toArr
+  j["smtp"] = smtp
+  try: writeFile(path, j.pretty())
+  except: discard
+
 # ─── UDP sockets ──────────────────────────────────────────────────────────────
 proc initSockets*() =
   gOutSock = newSocket(Domain.AF_INET, SockType.SOCK_DGRAM, IPPROTO_UDP, buffered = false)

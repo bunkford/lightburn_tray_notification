@@ -29,7 +29,7 @@ when not defined(windows):
 {.link: "lightburn_tray.o".}
 
 import ./lightburn_shared
-import std/os
+import std/[os, strutils]
 import wnim
 import winim/[winstr, utils]
 import winim/inc/[shellapi, winuser, windef, wingdi, mmsystem]
@@ -43,7 +43,7 @@ const
   ID_SOUND        = 1001
   ID_NOTIFY       = 1003
   ID_EMAIL        = 1004
-  ID_TEST_EMAIL   = 1005
+  ID_SETTINGS     = 1005
   ID_EXIT         = 1002
 
 # ─── Windows-only extra state ─────────────────────────────────────────────────
@@ -51,6 +51,7 @@ var
   gFrame: wFrame
   gNid:   NOTIFYICONDATAW
   gIcons: array[BurnStatus, HICON]
+  gSettingsDlg: wFrame = nil   # reference kept so GC doesn't collect it
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 proc setWcharArray[N: static int](arr: var array[N, WCHAR], s: string) =
@@ -169,41 +170,217 @@ proc playAlert() =
     # Fall back to the Windows "Exclamation" system sound
     discard PlaySoundW(newWideCString("SystemExclamation"), 0, SND_ALIAS or SND_ASYNC)
 
+# ─── Settings dialog ─────────────────────────────────────────────────────────
+proc showSettingsDialog() =
+  ## Open the native settings window (or bring existing one to front).
+  if not gSettingsDlg.isNil and IsWindow(gSettingsDlg.mHwnd):
+    SetForegroundWindow(gSettingsDlg.mHwnd)
+    return
+
+  let dlg = Frame(title = "Settings \x97 " & AppName,
+                  size  = (560, 0),
+                  style = wDefaultFrameStyle and not wResizeBorder and not wMaximizeBox)
+
+  # ── Helpers ────────────────────────────────────────────────────────────────
+  let panel = Panel(dlg)
+
+  var y = 10
+
+  proc lbl(text: string; atY: int) =
+    discard StaticText(panel, label = text, pos = (10, atY + 3), size = (160, 20))
+
+  proc txt(val: string; atY: int; w = 310): wTextCtrl =
+    result = TextCtrl(panel, value = val, pos = (175, atY), size = (w, 23))
+
+  # ── Section: Connection ────────────────────────────────────────────────────
+  discard StaticText(panel, label = "── Connection ──────────────────",
+                     pos = (10, y), size = (530, 18))
+  y += 24
+  lbl("LightBurn Host:", y); let hostCtrl     = txt(gCfg.lbHost,           y)
+  y += 29
+  lbl("Out Port:", y);       let outPortCtrl  = txt($gCfg.lbOutPort,       y, 80)
+  y += 29
+  lbl("In Port:", y);        let inPortCtrl   = txt($gCfg.lbInPort,        y, 80)
+  y += 29
+  lbl("Poll Interval (s):",  y); let pollCtrl = txt($gCfg.pollSecs,        y, 80)
+  y += 29
+  lbl("Complete Timer (s):", y); let compCtrl = txt($gCfg.completeSecs,    y, 80)
+  y += 29
+  lbl("Recv Timeout (ms):",  y); let recvCtrl = txt($gCfg.recvTimeoutMs,   y, 80)
+  y += 38
+
+  # ── Section: Alerts ────────────────────────────────────────────────────────
+  discard StaticText(panel, label = "── Alerts ──────────────────────",
+                     pos = (10, y), size = (530, 18))
+  y += 24
+  let soundChk  = CheckBox(panel, label = "Sound Alert",          pos = (10, y))
+  soundChk.value  = gSoundOn
+  y += 26
+  let notifyChk = CheckBox(panel, label = "Desktop Notifications",pos = (10, y))
+  notifyChk.value = gNotifyOn
+  y += 26
+  let emailChk  = CheckBox(panel, label = "Email Alerts",         pos = (10, y))
+  emailChk.value  = gEmailOn
+  y += 38
+
+  # ── Section: SMTP Email ────────────────────────────────────────────────────
+  discard StaticText(panel, label = "── SMTP Email ──────────────────",
+                     pos = (10, y), size = (530, 18))
+  y += 24
+  lbl("SMTP Host:", y);      let smtpHostCtrl = txt(gCfg.smtp.host,           y)
+  y += 29
+  lbl("SMTP Port:", y);      let smtpPortCtrl = txt($gCfg.smtp.port,          y, 80)
+  y += 29
+  let smtpSslChk = CheckBox(panel, label = "Use STARTTLS (port 587) or implicit SSL (port 465)",
+                             pos = (10, y), size = (530, 20))
+  smtpSslChk.value = gCfg.smtp.useSsl
+  y += 29
+  lbl("Username:", y);       let smtpUserCtrl = txt(gCfg.smtp.username,       y)
+  y += 29
+  lbl("Password:", y)
+  let smtpPassCtrl = TextCtrl(panel, value = gCfg.smtp.password,
+                               pos = (175, y), size = (310, 23), style = wTePassword)
+  y += 29
+  lbl("From:", y);           let smtpFromCtrl = txt(gCfg.smtp.fromAddr,       y)
+  y += 29
+  lbl("To (comma-sep.):", y);let smtpToCtrl   = txt(gCfg.smtp.toAddrs.join(", "), y)
+  y += 38
+
+  # ── Buttons ────────────────────────────────────────────────────────────────
+  let testEmailBtn = Button(panel, label = "Test Email...", pos = (10,      y), size = (110, 28))
+  let cancelBtn    = Button(panel, label = "Cancel",        pos = (340,     y), size = (90,  28))
+  let saveBtn      = Button(panel, label = "Save",          pos = (440,     y), size = (90,  28))
+  y += 38
+
+  # Resize panel and dialog to fit content
+  panel.size = (560, y + 10)
+  dlg.size   = (576, y + 70)
+  dlg.center()
+
+  # ── Event handlers ─────────────────────────────────────────────────────────
+  testEmailBtn.connect(wEvent_Button) do (ev: wEvent):
+    let (ok, err) = sendTestEmail()
+    if ok:
+      discard MessageBoxW(0, newWideCString("Test email delivered successfully."),
+                          newWideCString(AppName), MB_ICONINFORMATION or MB_OK)
+    else:
+      discard MessageBoxW(0, newWideCString("Could not send test email:\n" & err),
+                          newWideCString(AppName), MB_ICONERROR or MB_OK)
+
+  cancelBtn.connect(wEvent_Button) do (ev: wEvent): dlg.close()
+
+  saveBtn.connect(wEvent_Button) do (ev: wEvent):
+    # ── Validation ──────────────────────────────────────────────────────────
+    var errs: seq[string]
+    let host = hostCtrl.value.strip()
+    if host.len == 0: errs.add("LightBurn Host cannot be empty.")
+
+    let outPort = try: outPortCtrl.value.strip().parseInt except: -1
+    if outPort < 1 or outPort > 65535: errs.add("Out Port must be 1-65535.")
+    let inPort  = try: inPortCtrl.value.strip().parseInt  except: -1
+    if inPort  < 1 or inPort  > 65535: errs.add("In Port must be 1-65535.")
+
+    let pollSecs = try: pollCtrl.value.strip().parseFloat except: -1.0
+    if pollSecs < 0.1 or pollSecs > 60.0:
+      errs.add("Poll Interval must be 0.1-60 seconds.")
+    let completeSecs = try: compCtrl.value.strip().parseFloat except: -1.0
+    if completeSecs < 1.0 or completeSecs > 3600.0:
+      errs.add("Complete Timer must be 1-3600 seconds.")
+    let recvMs = try: recvCtrl.value.strip().parseInt except: -1
+    if recvMs < 50 or recvMs > 10000:
+      errs.add("Recv Timeout must be 50-10000 ms.")
+
+    let smtpPort = try: smtpPortCtrl.value.strip().parseInt except: -1
+    if smtpPort < 1 or smtpPort > 65535: errs.add("SMTP Port must be 1-65535.")
+
+    let fromAddr = smtpFromCtrl.value.strip()
+    if fromAddr.len > 0 and '@' notin fromAddr:
+      errs.add("From address does not look like a valid email.")
+
+    if errs.len > 0:
+      discard MessageBoxW(0, newWideCString(errs.join("\n")),
+                          newWideCString(AppName & " \x97 Validation Error"),
+                          MB_ICONERROR or MB_OK)
+      return
+
+    # ── Apply ────────────────────────────────────────────────────────────────
+    let prevInPort   = gCfg.lbInPort
+    let prevPollSecs = gCfg.pollSecs
+
+    gCfg.lbHost        = host
+    gCfg.lbOutPort     = outPort
+    gCfg.lbInPort      = inPort
+    gCfg.pollSecs      = pollSecs
+    gCfg.completeSecs  = completeSecs
+    gCfg.recvTimeoutMs = recvMs
+    gSoundOn  = soundChk.isChecked();  gCfg.soundOn  = gSoundOn
+    gNotifyOn = notifyChk.isChecked(); gCfg.notifyOn = gNotifyOn
+    gEmailOn  = emailChk.isChecked();  gCfg.emailOn  = gEmailOn
+    gCfg.smtp.host     = smtpHostCtrl.value.strip()
+    gCfg.smtp.port     = smtpPort
+    gCfg.smtp.useSsl   = smtpSslChk.isChecked()
+    gCfg.smtp.username = smtpUserCtrl.value.strip()
+    gCfg.smtp.password = smtpPassCtrl.value
+    gCfg.smtp.fromAddr = fromAddr
+    gCfg.smtp.toAddrs  = @[]
+    for part in smtpToCtrl.value.split(','):
+      let t = part.strip()
+      if t.len > 0: gCfg.smtp.toAddrs.add(t)
+
+    # Rebind socket if listen port changed
+    if prevInPort != gCfg.lbInPort:
+      closeSockets()
+      try: initSockets()
+      except:
+        discard MessageBoxW(0, newWideCString("Could not bind UDP port " & $gCfg.lbInPort &
+                                              ".\nReverted to previous port."),
+                            newWideCString(AppName), MB_ICONERROR or MB_OK)
+        gCfg.lbInPort = prevInPort
+        closeSockets()
+        try: initSockets() except: discard
+        return
+
+    # Update poll timer if interval changed
+    if prevPollSecs != gCfg.pollSecs:
+      gFrame.stopTimer(TIMER_POLL)
+      gFrame.startTimer(gCfg.pollSecs, TIMER_POLL)
+
+    saveSettings(gCfg)
+    dlg.close()
+
+  dlg.connect(wEvent_Close) do (ev: wEvent):
+    gSettingsDlg = nil
+    ev.skip()
+
+  gSettingsDlg = dlg
+  dlg.show()
+
 # ─── Right-click context menu ─────────────────────────────────────────────────
 proc showContextMenu(hwnd: HWND) =
   var pt: POINT
   GetCursorPos(addr pt)
-  # Required so the menu dismisses properly when clicking elsewhere
   SetForegroundWindow(hwnd)
 
   let hMenu = CreatePopupMenu()
 
-  # Status header — greyed, not clickable
   AppendMenuW(hMenu, MF_STRING or MF_GRAYED, 0,
               newWideCString(statusLabel(gStatus)))
   AppendMenuW(hMenu, MF_SEPARATOR, 0, nil)
 
-  # Notifications toggle with check mark
   let notifyLabel = if gNotifyOn: "Notifications: On" else: "Notifications: Off"
   let notifyFlags = MF_STRING or (if gNotifyOn: MF_CHECKED else: 0)
-  AppendMenuW(hMenu, notifyFlags.UINT, ID_NOTIFY.UINT_PTR,
-              newWideCString(notifyLabel))
+  AppendMenuW(hMenu, notifyFlags.UINT, ID_NOTIFY.UINT_PTR, newWideCString(notifyLabel))
 
-  # Sound toggle with check mark
   let soundLabel = if gSoundOn: "Sound: On" else: "Sound: Off"
   let soundFlags = MF_STRING or (if gSoundOn: MF_CHECKED else: 0)
-  AppendMenuW(hMenu, soundFlags.UINT, ID_SOUND.UINT_PTR,
-              newWideCString(soundLabel))
+  AppendMenuW(hMenu, soundFlags.UINT, ID_SOUND.UINT_PTR, newWideCString(soundLabel))
 
-  # Email toggle with check mark
   let emailLabel = if gEmailOn: "Email Alert: On" else: "Email Alert: Off"
   let emailFlags = MF_STRING or (if gEmailOn: MF_CHECKED else: 0)
-  AppendMenuW(hMenu, emailFlags.UINT, ID_EMAIL.UINT_PTR,
-              newWideCString(emailLabel))
+  AppendMenuW(hMenu, emailFlags.UINT, ID_EMAIL.UINT_PTR, newWideCString(emailLabel))
 
-  AppendMenuW(hMenu, MF_STRING, ID_TEST_EMAIL.UINT_PTR,
-              newWideCString("Send Test Email..."))
-
+  AppendMenuW(hMenu, MF_SEPARATOR, 0, nil)
+  AppendMenuW(hMenu, MF_STRING, ID_SETTINGS.UINT_PTR, newWideCString("Settings..."))
   AppendMenuW(hMenu, MF_SEPARATOR, 0, nil)
   AppendMenuW(hMenu, MF_STRING, ID_EXIT.UINT_PTR, newWideCString("Exit"))
 
@@ -213,18 +390,11 @@ proc showContextMenu(hwnd: HWND) =
   DestroyMenu(hMenu)
 
   case cmd
-  of ID_NOTIFY: gNotifyOn = not gNotifyOn
-  of ID_SOUND:  gSoundOn  = not gSoundOn
-  of ID_EMAIL:  gEmailOn  = not gEmailOn
-  of ID_TEST_EMAIL:
-    let (ok, err) = sendTestEmail()
-    if ok:
-      discard MessageBoxW(0, newWideCString("Test email delivered successfully."),
-                          newWideCString(AppName), MB_ICONINFORMATION or MB_OK)
-    else:
-      discard MessageBoxW(0, newWideCString("Could not send test email:\n" & err),
-                          newWideCString(AppName), MB_ICONERROR or MB_OK)
-  of ID_EXIT:   gFrame.close()
+  of ID_NOTIFY:   gNotifyOn = not gNotifyOn
+  of ID_SOUND:    gSoundOn  = not gSoundOn
+  of ID_EMAIL:    gEmailOn  = not gEmailOn
+  of ID_SETTINGS: showSettingsDialog()
+  of ID_EXIT:     gFrame.close()
   else: discard
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

@@ -31,14 +31,14 @@ fi
 
 if [ -n "$OPENSSL_DIR" ] && [ -d "$OPENSSL_DIR/lib" ]; then
   echo "  OpenSSL: $OPENSSL_DIR"
-  nim c -d:ssl -d:release $MIN_VER_FLAGS \
+  nim c -d:ssl -d:release --mm:orc $MIN_VER_FLAGS \
     --passL:"-L$OPENSSL_DIR/lib" \
     --passL:"-Wl,-rpath,$OPENSSL_DIR/lib" \
     lightburn_tray_mac.nim
 else
   echo "  Warning: Homebrew OpenSSL not found — SMTP/TLS may fail at runtime."
   echo "           Fix: brew install openssl"
-  nim c -d:ssl -d:release $MIN_VER_FLAGS lightburn_tray_mac.nim
+  nim c -d:ssl -d:release --mm:orc $MIN_VER_FLAGS lightburn_tray_mac.nim
 fi
 
 echo "==> Packaging $APP ..."

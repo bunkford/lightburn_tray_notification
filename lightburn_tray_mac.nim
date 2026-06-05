@@ -14,7 +14,7 @@ when not defined(macosx):
   {.error: "lightburn_tray_mac is macOS-only. Compile on a Mac with: nim c -d:ssl lightburn_tray_mac.nim"}
 
 import ./lightburn_shared
-import std/[os, osproc]
+import std/[os, osproc, strutils]
 
 # ─── Link the ObjC helper and Cocoa framework ─────────────────────────────────
 {.compile: "lightburn_mac_helper.m".}
@@ -55,7 +55,8 @@ proc nim_poll_tick() {.exportc.} =
       if emailOk:
         mac_show_notification("Email Sent", "Alert email delivered successfully.")
       else:
-        mac_show_notification("Email Failed", "Could not send alert: " & emailErr)
+        var msg = "Could not send alert: " & emailErr
+        mac_show_notification("Email Failed", msg.cstring)
     mac_start_complete_timer()
 
 # Called when the complete timer fires (after completeSecs). Reverts to idle.
@@ -95,6 +96,44 @@ proc nim_get_sound_on():  cint {.exportc.} = cint(gSoundOn)
 proc nim_get_notify_on(): cint {.exportc.} = cint(gNotifyOn)
 proc nim_get_email_on():  cint {.exportc.} = cint(gEmailOn)
 proc nim_get_status():    cint {.exportc.} = cint(ord(gStatus))
+
+# ─── Settings read API (called from main thread only) ─────────────────────────
+var gCfgStrBuf: string  # separate from gLabelBuf — main-thread only
+
+proc nim_cfg_lb_host(): cstring {.exportc.} =
+  gCfgStrBuf = gCfg.lbHost; gCfgStrBuf.cstring
+proc nim_cfg_lb_out_port(): cint {.exportc.} = cint(gCfg.lbOutPort)
+proc nim_cfg_lb_in_port():  cint {.exportc.} = cint(gCfg.lbInPort)
+proc nim_cfg_poll_secs():   cdouble {.exportc.} = cdouble(gCfg.pollSecs)
+proc nim_cfg_complete_secs(): cdouble {.exportc.} = cdouble(gCfg.completeSecs)
+proc nim_cfg_recv_timeout_ms(): cint {.exportc.} = cint(gCfg.recvTimeoutMs)
+proc nim_cfg_smtp_host(): cstring {.exportc.} =
+  gCfgStrBuf = gCfg.smtp.host; gCfgStrBuf.cstring
+proc nim_cfg_smtp_port():    cint {.exportc.} = cint(gCfg.smtp.port)
+proc nim_cfg_smtp_use_ssl(): cint {.exportc.} = cint(gCfg.smtp.useSsl)
+proc nim_cfg_smtp_username(): cstring {.exportc.} =
+  gCfgStrBuf = gCfg.smtp.username; gCfgStrBuf.cstring
+proc nim_cfg_smtp_password(): cstring {.exportc.} =
+  gCfgStrBuf = gCfg.smtp.password; gCfgStrBuf.cstring
+proc nim_cfg_smtp_from(): cstring {.exportc.} =
+  gCfgStrBuf = gCfg.smtp.fromAddr; gCfgStrBuf.cstring
+proc nim_cfg_smtp_to(): cstring {.exportc.} =
+  gCfgStrBuf = gCfg.smtp.toAddrs.join(", "); gCfgStrBuf.cstring
+
+proc nim_reload_settings(): cint {.exportc.} =
+  ## Reload settings from disk and reinit sockets if listen port changed.
+  ## Called from main thread after the ObjC settings window writes the JSON file.
+  let prevPort = gCfg.lbInPort
+  gCfg      = loadSettings()
+  gSoundOn  = gCfg.soundOn
+  gNotifyOn = gCfg.notifyOn
+  gEmailOn  = gCfg.emailOn
+  if prevPort != gCfg.lbInPort:
+    closeSockets()
+    try: initSockets(); result = 1
+    except: result = 0
+  else:
+    result = 1
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 when isMainModule:
