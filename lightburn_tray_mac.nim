@@ -27,11 +27,12 @@ proc mac_show_notification(title, body: cstring){.importc.}
 proc mac_start_complete_timer()                 {.importc.}
 proc mac_stop_all_timers()                      {.importc.}
 proc mac_quit()                                 {.importc.}
+proc mac_resource_dir(): cstring               {.importc.}
 
 # ─── Sound (macOS: afplay command) ────────────────────────────────────────────
 proc playAlert() =
   if not gSoundOn: return
-  let wav = getAppDir() / "complete.wav"
+  let wav = resourceDir() / "complete.wav"
   let cmd =
     if fileExists(wav): "afplay \"" & wav & "\""
     else:               "afplay /System/Library/Sounds/Glass.aiff"
@@ -97,6 +98,8 @@ proc nim_get_status():    cint {.exportc.} = cint(ord(gStatus))
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 when isMainModule:
+  # Must be set before loadSettings() so resourceDir() points at Contents/Resources/
+  gResourceDir  = $mac_resource_dir()
   gCfg      = loadSettings()
   gSoundOn  = gCfg.soundOn
   gNotifyOn = gCfg.notifyOn

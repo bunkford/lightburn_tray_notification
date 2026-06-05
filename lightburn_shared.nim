@@ -12,6 +12,16 @@ when not defined(windows):
 
 const AppName* = "LightBurn Monitor"
 
+# On macOS the binary lives in Contents/MacOS/ but resources go in Contents/Resources/.
+# lightburn_tray_mac.nim sets this to [[NSBundle mainBundle] resourcePath] at startup
+# so that loadSettings() and sound playback find files in the right place.
+# Windows leaves this empty so resourceDir() falls back to getAppDir().
+var gResourceDir*: string = ""
+
+proc resourceDir*(): string =
+  if gResourceDir.len > 0: gResourceDir
+  else: getAppDir()
+
 # ─── Settings ─────────────────────────────────────────────────────────────────
 type
   SmtpSettings* = object
@@ -59,7 +69,7 @@ proc defaultSettings*(): Settings =
 
 proc loadSettings*(): Settings =
   result = defaultSettings()
-  let path = getAppDir() / "lightburn_tray.json"
+  let path = resourceDir() / "lightburn_tray.json"
   if not fileExists(path): return
   try:
     let j = parseFile(path)

@@ -91,7 +91,29 @@ static NSImage* iconForStatus(int s) {
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
     center.delegate = self;
     [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
-                          completionHandler:^(BOOL granted, NSError *error) {}];
+                          completionHandler:^(BOOL granted, NSError *error) {
+        if (!granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSAlert *alert = [[NSAlert alloc] init];
+                alert.messageText = @"Notification Permission Needed";
+                alert.informativeText =
+                    @"LightBurn Monitor needs permission to show notifications "
+                    @"when a burn completes.\n\nPlease enable it in "
+                    @"System Settings \u2192 Notifications \u2192 LightBurnMonitor.";
+                alert.alertStyle = NSAlertStyleWarning;
+                [alert addButtonWithTitle:@"Open System Settings"];
+                [alert addButtonWithTitle:@"Dismiss"];
+                NSModalResponse resp = [alert runModal];
+                if (resp == NSAlertFirstButtonReturn) {
+                    // macOS 14+ URL; falls back gracefully on older systems
+                    NSURL *url = [NSURL URLWithString:
+                        @"x-apple.systempreferences:com.apple.Notifications-Settings"];
+                    [[NSWorkspace sharedWorkspace] openURL:url];
+                }
+                [alert release];
+            });
+        }
+    }];
 
     // Poll timer — nim_poll_tick() blocks for up to recvTimeoutMs waiting on the
     // socket, so dispatch it off the main thread to keep the run loop responsive.
@@ -226,6 +248,7 @@ static NSImage* iconForStatus(int s) {
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
     completionHandler(UNNotificationPresentationOptionBanner |
+                      UNNotificationPresentationOptionList  |
                       UNNotificationPresentationOptionSound);
 }
 
@@ -248,6 +271,19 @@ void mac_run(void) {
     gDelegate      = [[TrayDelegate alloc] init];
     NSApp.delegate = gDelegate;
     [NSApp run];
+}
+
+// Returns the bundle Resources directory (or the binary directory when not in a bundle).
+// The returned pointer is valid for the lifetime of the process.
+const char* mac_resource_dir(void) {
+    static NSString *sPath = nil;
+    if (sPath == nil) {
+        NSString *rp = [[NSBundle mainBundle] resourcePath];
+        sPath = (rp ? rp : [[[[NSBundle mainBundle] executableURL]
+                               URLByDeletingLastPathComponent] path]);
+        [sPath retain];
+    }
+    return [sPath UTF8String];
 }
 
 void mac_show_notification(const char *title, const char *body) {
