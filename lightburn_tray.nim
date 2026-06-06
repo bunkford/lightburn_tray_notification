@@ -183,84 +183,104 @@ proc showSettingsDialog() =
     SetForegroundWindow(gSettingsDlg.mHwnd)
     return
 
-  let dlg = Frame(title = "Settings \x97 " & AppName,
-                  size  = (560, 0),
+  # Layout constants — mirror the Mac panel geometry
+  const
+    LBL_X   = 10    # label leading edge
+    LBL_W   = 162   # label column width (right-aligned)
+    FLD_X   = 176   # field leading edge
+    FLD_W   = 338   # field width to right margin
+    SML_W   = 80    # narrow field (ports / numbers)
+    ROW_H   = 23    # text control height
+    ROW_GAP = 7     # gap between consecutive rows
+    SEC_GAP = 14    # extra vertical space before a section header
+    TOP_PAD = 14    # top padding inside a page panel
+    PNL_W   = 530   # page panel inner width
+    NB_H    = 430   # notebook height
+    BTN_Y   = NB_H + 10  # Y of the button strip
+
+  let dlg = Frame(title = "Settings - " & AppName,
+                  size  = (580, 0),
                   style = wDefaultFrameStyle and not wResizeBorder and not wMaximizeBox)
 
-  # ── Helpers ────────────────────────────────────────────────────────────────
-  let panel = Panel(dlg)
+  let mainPanel = Panel(dlg)
+  let nb = Notebook(mainPanel, pos = (8, 8), size = (560, NB_H))
 
-  var y = 10
+  # ── Tab 1: Connection ──────────────────────────────────────────────────────
+  let pg1 = Panel(nb)
+  nb.addPage(pg1, "Connection")
 
-  proc lbl(text: string; atY: int) =
-    discard StaticText(panel, label = text, pos = (10, atY + 3), size = (160, 20))
+  var y = TOP_PAD
 
-  proc txt(val: string; atY: int; w = 310): wTextCtrl =
-    result = TextCtrl(panel, value = val, pos = (175, atY), size = (w, 23))
+  proc lbl1(text: string; atY: int) =
+    discard StaticText(pg1, label = text,
+                       pos = (LBL_X, atY + 4), size = (LBL_W, 18),
+                       style = wAlignRight)
 
-  # ── Section: Connection ────────────────────────────────────────────────────
-  discard StaticText(panel, label = "── Connection ──────────────────",
-                     pos = (10, y), size = (530, 18))
-  y += 24
-  lbl("LightBurn Host:", y); let hostCtrl     = txt(gCfg.lbHost,           y)
-  y += 29
-  lbl("Out Port:", y);       let outPortCtrl  = txt($gCfg.lbOutPort,       y, 80)
-  y += 29
-  lbl("In Port:", y);        let inPortCtrl   = txt($gCfg.lbInPort,        y, 80)
-  y += 29
-  lbl("Poll Interval (s):",  y); let pollCtrl = txt($gCfg.pollSecs,        y, 80)
-  y += 29
-  lbl("Complete Timer (s):", y); let compCtrl = txt($gCfg.completeSecs,    y, 80)
-  y += 29
-  lbl("Recv Timeout (ms):",  y); let recvCtrl = txt($gCfg.recvTimeoutMs,   y, 80)
-  y += 38
+  proc txt1(val: string; atY: int; w = FLD_W): wTextCtrl =
+    result = TextCtrl(pg1, value = val, pos = (FLD_X, atY), size = (w, ROW_H))
 
-  # ── Section: Alerts ────────────────────────────────────────────────────────
-  discard StaticText(panel, label = "── Alerts ──────────────────────",
-                     pos = (10, y), size = (530, 18))
-  y += 24
-  let soundChk  = CheckBox(panel, label = "Sound Alert",          pos = (10, y))
-  soundChk.value  = gSoundOn
-  y += 26
-  let notifyChk = CheckBox(panel, label = "Desktop Notifications",pos = (10, y))
-  notifyChk.value = gNotifyOn
-  y += 26
-  let emailChk  = CheckBox(panel, label = "Email Alerts",         pos = (10, y))
-  emailChk.value  = gEmailOn
-  y += 38
+  proc secHdr1(text: string; atY: int) =
+    let tf = StaticText(pg1, label = text, pos = (LBL_X, atY), size = (PNL_W, 16))
+    tf.font = Font(8, weight = wFontWeightBold)
 
-  # ── Section: SMTP Email ────────────────────────────────────────────────────
-  discard StaticText(panel, label = "── SMTP Email ──────────────────",
-                     pos = (10, y), size = (530, 18))
-  y += 24
-  lbl("SMTP Host:", y);      let smtpHostCtrl = txt(gCfg.smtp.host,           y)
-  y += 29
-  lbl("SMTP Port:", y);      let smtpPortCtrl = txt($gCfg.smtp.port,          y, 80)
-  y += 29
-  let smtpSslChk = CheckBox(panel, label = "Use STARTTLS (port 587) or implicit SSL (port 465)",
-                             pos = (10, y), size = (530, 20))
-  smtpSslChk.value = gCfg.smtp.useSsl
-  y += 29
-  lbl("Username:", y);       let smtpUserCtrl = txt(gCfg.smtp.username,       y)
-  y += 29
-  lbl("Password:", y)
-  let smtpPassCtrl = TextCtrl(panel, value = gCfg.smtp.password,
-                               pos = (175, y), size = (310, 23), style = wTePassword)
-  y += 29
-  lbl("From:", y);           let smtpFromCtrl = txt(gCfg.smtp.fromAddr,       y)
-  y += 29
-  lbl("To (comma-sep.):", y);let smtpToCtrl   = txt(gCfg.smtp.toAddrs.join(", "), y)
-  y += 38
+  secHdr1("LIGHTBURN CONNECTION", y);  y += 20
+  lbl1("LightBurn Host:", y);  let hostCtrl    = txt1(gCfg.lbHost,       y);  y += ROW_H + ROW_GAP
+  lbl1("Out Port:", y);        let outPortCtrl = txt1($gCfg.lbOutPort,   y, SML_W); y += ROW_H + ROW_GAP
+  lbl1("In Port:", y);         let inPortCtrl  = txt1($gCfg.lbInPort,    y, SML_W); y += ROW_H + SEC_GAP
+  secHdr1("TIMING", y);        y += 20
+  lbl1("Poll Interval (s):",    y); let pollCtrl = txt1($gCfg.pollSecs,      y, SML_W); y += ROW_H + ROW_GAP
+  lbl1("Complete Display (s):", y); let compCtrl = txt1($gCfg.completeSecs,  y, SML_W); y += ROW_H + ROW_GAP
+  lbl1("Recv Timeout (ms):",    y); let recvCtrl = txt1($gCfg.recvTimeoutMs, y, SML_W); y += ROW_H
 
-  # ── Buttons ────────────────────────────────────────────────────────────────
-  let testEmailBtn = Button(panel, label = "Test Email...", pos = (10,      y), size = (110, 28))
-  let cancelBtn    = Button(panel, label = "Cancel",        pos = (340,     y), size = (90,  28))
-  let saveBtn      = Button(panel, label = "Save",          pos = (440,     y), size = (90,  28))
-  y += 38
+  # ── Tab 2: Email & Alerts ──────────────────────────────────────────────────
+  let pg2 = Panel(nb)
+  nb.addPage(pg2, "Email && Alerts")
 
-  # Resize panel and dialog to fit content
-  panel.size = (560, y + 10)
-  dlg.size   = (576, y + 70)
+  y = TOP_PAD
+
+  proc lbl2(text: string; atY: int) =
+    discard StaticText(pg2, label = text,
+                       pos = (LBL_X, atY + 4), size = (LBL_W, 18),
+                       style = wAlignRight)
+
+  proc txt2(val: string; atY: int; w = FLD_W): wTextCtrl =
+    result = TextCtrl(pg2, value = val, pos = (FLD_X, atY), size = (w, ROW_H))
+
+  proc secHdr2(text: string; atY: int) =
+    let tf = StaticText(pg2, label = text, pos = (LBL_X, atY), size = (PNL_W, 16))
+    tf.font = Font(8, weight = wFontWeightBold)
+
+  secHdr2("ALERTS", y);  y += 20
+  let soundChk  = CheckBox(pg2, label = "Sound Alert",           pos = (FLD_X, y))
+  soundChk.value  = gSoundOn;   y += ROW_H + ROW_GAP
+  let notifyChk = CheckBox(pg2, label = "Desktop Notifications", pos = (FLD_X, y))
+  notifyChk.value = gNotifyOn;  y += ROW_H + ROW_GAP
+  let emailChk  = CheckBox(pg2, label = "Email Alerts",          pos = (FLD_X, y))
+  emailChk.value  = gEmailOn;   y += ROW_H + SEC_GAP
+
+  secHdr2("SMTP EMAIL", y);  y += 20
+  lbl2("SMTP Host:", y);      let smtpHostCtrl = txt2(gCfg.smtp.host,              y); y += ROW_H + ROW_GAP
+  lbl2("SMTP Port:", y);      let smtpPortCtrl = txt2($gCfg.smtp.port,             y, SML_W); y += ROW_H + ROW_GAP
+  let smtpSslChk = CheckBox(pg2,
+                             label = "Use STARTTLS (port 587) or implicit SSL (port 465)",
+                             pos = (FLD_X, y), size = (FLD_W, 20))
+  smtpSslChk.value = gCfg.smtp.useSsl;  y += 22 + ROW_GAP
+  lbl2("Username:", y);       let smtpUserCtrl = txt2(gCfg.smtp.username,          y); y += ROW_H + ROW_GAP
+  lbl2("Password:", y)
+  let smtpPassCtrl = TextCtrl(pg2, value = gCfg.smtp.password,
+                               pos = (FLD_X, y), size = (FLD_W, ROW_H),
+                               style = wTePassword);                                    y += ROW_H + ROW_GAP
+  lbl2("From:", y);           let smtpFromCtrl = txt2(gCfg.smtp.fromAddr,          y); y += ROW_H + ROW_GAP
+  lbl2("To (comma-sep.):", y);let smtpToCtrl   = txt2(gCfg.smtp.toAddrs.join(", "), y)
+
+  # ── Button strip ───────────────────────────────────────────────────────────
+  let testEmailBtn = Button(mainPanel, label = "Test Email...", pos = (10,  BTN_Y), size = (110, 28))
+  let cancelBtn    = Button(mainPanel, label = "Cancel",        pos = (348, BTN_Y), size = (90,  28))
+  let saveBtn      = Button(mainPanel, label = "Save",          pos = (448, BTN_Y), size = (90,  28))
+  saveBtn.setDefault()
+
+  mainPanel.size = (576, BTN_Y + 42)
+  dlg.clientSize = (576, BTN_Y + 42)
   dlg.center()
 
   # ── Event handlers ─────────────────────────────────────────────────────────
@@ -276,7 +296,7 @@ proc showSettingsDialog() =
   cancelBtn.connect(wEvent_Button) do (ev: wEvent): dlg.close()
 
   saveBtn.connect(wEvent_Button) do (ev: wEvent):
-    # ── Validation ──────────────────────────────────────────────────────────
+    # ── Validation ────────────────────────────────────────────────────────────
     var errs: seq[string]
     let host = hostCtrl.value.strip()
     if host.len == 0: errs.add("LightBurn Host cannot be empty.")
@@ -284,7 +304,7 @@ proc showSettingsDialog() =
     let outPort = try: outPortCtrl.value.strip().parseInt except: -1
     if outPort < 1 or outPort > 65535: errs.add("Out Port must be 1-65535.")
     let inPort  = try: inPortCtrl.value.strip().parseInt  except: -1
-    if inPort  < 1 or inPort  > 65535: errs.add("In Port must be 1-65535.")
+    if inPort   < 1 or inPort  > 65535: errs.add("In Port must be 1-65535.")
 
     let pollSecs = try: pollCtrl.value.strip().parseFloat except: -1.0
     if pollSecs < 0.1 or pollSecs > 60.0:
@@ -305,11 +325,11 @@ proc showSettingsDialog() =
 
     if errs.len > 0:
       discard MessageBoxW(0, newWideCString(errs.join("\n")),
-                          newWideCString(AppName & " \x97 Validation Error"),
+                          newWideCString(AppName & " - Validation Error"),
                           MB_ICONERROR or MB_OK)
       return
 
-    # ── Apply ────────────────────────────────────────────────────────────────
+    # ── Apply ─────────────────────────────────────────────────────────────────
     let prevInPort   = gCfg.lbInPort
     let prevPollSecs = gCfg.pollSecs
 
@@ -351,8 +371,8 @@ proc showSettingsDialog() =
       gFrame.stopTimer(TIMER_POLL)
       gFrame.startTimer(gCfg.pollSecs, TIMER_POLL)
 
-    winSaveCredential(gCfg.smtp.password.cstring)  # save to Credential Manager
-    saveSettings(gCfg)  # writes JSON without the password
+    winSaveCredential(gCfg.smtp.password.cstring)
+    saveSettings(gCfg)
     dlg.close()
 
   dlg.connect(wEvent_Close) do (ev: wEvent):
