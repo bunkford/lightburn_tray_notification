@@ -87,7 +87,6 @@ hdiutil create -size 80m \
   -volname "$DMG_TITLE" \
   -fs HFS+ \
   -fsargs "-c c=12,b=4096" \
-  -format UDRW \
   "$TEMP_DMG" >/dev/null
 
 MOUNT_OUT=$(hdiutil attach -readwrite -noverify -noautoopen "$TEMP_DMG")
