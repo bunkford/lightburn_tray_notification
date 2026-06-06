@@ -49,7 +49,16 @@ cp lightburn_tray_mac    "$MACOS/"
 cp Info.plist            "$APP/Contents/"
 [ -f AppIcon.icns ]        && cp AppIcon.icns        "$RESOURCES/"
 [ -f complete.wav ]        && cp complete.wav         "$RESOURCES/"
-[ -f lightburn_tray.json ] && cp lightburn_tray.json "$RESOURCES/"
+# Copy settings JSON with the password field blanked — the real password
+# is stored in the macOS Keychain, never on disk in the app bundle.
+if [ -f lightburn_tray.json ]; then
+  python3 -c "
+import json, sys
+with open('lightburn_tray.json') as f: d = json.load(f)
+d.setdefault('smtp', {})['password'] = ''
+print(json.dumps(d, indent=2))
+" > "$RESOURCES/lightburn_tray.json"
+fi
 
 # ── Ad-hoc code sign ──────────────────────────────────────────────────────────
 # macOS Sequoia silently rejects UNUserNotificationCenter requests from unsigned
