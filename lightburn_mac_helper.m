@@ -52,13 +52,11 @@ static NSMenuItem   *gNotifyItem = nil;
 static NSMenuItem   *gEmailItem  = nil;
 static double        gPollSecs     = 2.0;
 static double        gCompleteSecs = 8.0;
-static TrayDelegate *gDelegate   = nil;  // forward-declared so schedulePoll can use it
+static TrayDelegate *gDelegate   = nil;   // forward-declared so schedulePoll can use it
 
 // ── Dedicated serial poll queue ───────────────────────────────────────────────
-// Replaces NSTimer + global concurrent queue.  Chained dispatch_after on a
-// serial queue means:
-//   - Only one nim_poll_tick() is ever in flight — no concurrent Nim GC access.
-//   - Queue depth never grows, so icon-update latency stays constant over time.
+// Chained dispatch_after on a serial queue: only one nim_poll_tick() is ever
+// in flight, preventing queue depth growth and Nim GC thread-safety issues.
 static dispatch_queue_t gPollQueue = NULL;
 static volatile BOOL    gPolling   = NO;
 
@@ -89,8 +87,20 @@ static NSImage *iconForStatus(int s) {
 }
 
 // =============================================================================
-// SettingsController — native settings panel (two-tab layout)
+// SettingsController - native two-tab settings panel
 // =============================================================================
+
+// ── Layout constants ──────────────────────────────────────────────────────────
+// All positions are relative to the tab content view's bounds.
+// Labels go from LBL_LEAD to (FLD_LEAD-8); fields go from FLD_LEAD to (width-FLD_TRAIL).
+#define LBL_LEAD   10    // label leading inset
+#define FLD_LEAD  174    // field leading x (right of the label column)
+#define FLD_TRAIL  14    // field trailing margin
+#define ROW_H      22    // text-field height
+#define ROW_GAP     9    // vertical gap between consecutive rows
+#define SEC_GAP    16    // extra gap before a section header
+#define TOP_PAD    16    // top padding inside the tab content view
+
 @interface SettingsController : NSObject <NSWindowDelegate>
 @property (strong) NSPanel            *panel;
 // Connection tab
@@ -117,39 +127,8 @@ static NSImage *iconForStatus(int s) {
 
 @implementation SettingsController
 
-// ── UI helpers ────────────────────────────────────────────────────────────────
+// ── Number formatters ─────────────────────────────────────────────────────────
 
-static NSTextField *makeLabel(NSString *text) {
-    NSTextField *tf = [NSTextField labelWithString:text];
-    tf.alignment    = NSTextAlignmentRight;
-    tf.font         = [NSFont systemFontOfSize:13];
-    [tf setContentHuggingPriority:NSLayoutPriorityRequired
-                      forOrientation:NSLayoutConstraintOrientationHorizontal];
-    [tf.widthAnchor constraintEqualToConstant:155].active = YES;
-    return tf;
-}
-
-static NSTextField *makeField(NSString *ph) {
-    NSTextField *tf      = [[NSTextField alloc] init];
-    tf.placeholderString = ph;
-    tf.bordered  = YES;
-    tf.editable  = YES;
-    tf.font      = [NSFont systemFontOfSize:13];
-    tf.translatesAutoresizingMaskIntoConstraints = NO;
-    return tf;
-}
-
-static NSSecureTextField *makeSecureField(NSString *ph) {
-    NSSecureTextField *tf = [[NSSecureTextField alloc] init];
-    tf.placeholderString  = ph;
-    tf.bordered  = YES;
-    tf.editable  = YES;
-    tf.font      = [NSFont systemFontOfSize:13];
-    tf.translatesAutoresizingMaskIntoConstraints = NO;
-    return tf;
-}
-
-// Integer formatter clamped to [lo, hi] — rejects non-numeric input
 static NSNumberFormatter *intFmt(int lo, int hi) {
     NSNumberFormatter *f   = [[NSNumberFormatter alloc] init];
     f.numberStyle           = NSNumberFormatterDecimalStyle;
@@ -160,7 +139,6 @@ static NSNumberFormatter *intFmt(int lo, int hi) {
     return f;
 }
 
-// Float formatter clamped to [lo, hi]
 static NSNumberFormatter *floatFmt(double lo, double hi) {
     NSNumberFormatter *f   = [[NSNumberFormatter alloc] init];
     f.numberStyle           = NSNumberFormatterDecimalStyle;
@@ -172,6 +150,8 @@ static NSNumberFormatter *floatFmt(double lo, double hi) {
     return f;
 }
 
+// ── Widget factories ──────────────────────────────────────────────────────────
+
 static NSTextField *sectionHdr(NSString *text) {
     NSTextField *tf = [NSTextField labelWithString:text];
     tf.font         = [NSFont boldSystemFontOfSize:11];
@@ -179,27 +159,83 @@ static NSTextField *sectionHdr(NSString *text) {
     return tf;
 }
 
-// Build one horizontal row: right-aligned label (fixed width) + filling field
-- (NSView *)row:(NSString *)lbl field:(NSView *)field {
-    NSTextField *label = makeLabel(lbl);
-    NSStackView *row   = [NSStackView stackViewWithViews:@[label, field]];
-    row.orientation    = NSUserInterfaceLayoutOrientationHorizontal;
-    row.spacing        = 8;
-    row.alignment      = NSLayoutAttributeCenterY;
-    row.distribution   = NSStackViewDistributionFill;
-    [field setContentHuggingPriority:NSLayoutPriorityDefaultLow
-                         forOrientation:NSLayoutConstraintOrientationHorizontal];
-    return row;
+// Plain editable text field. translatesAutoresizingMaskIntoConstraints is left
+// as YES (default); the addRow helper will set it to NO before adding constraints.
+static NSTextField *makeField(NSString *ph) {
+    NSTextField *tf      = [[NSTextField alloc] init];
+    tf.placeholderString = ph;
+    tf.bordered          = YES;
+    tf.editable          = YES;
+    tf.usesSingleLineMode = YES;
+    tf.font              = [NSFont systemFontOfSize:13];
+    return tf;
+}
+
+static NSSecureTextField *makeSecureField(NSString *ph) {
+    NSSecureTextField *tf = [[NSSecureTextField alloc] init];
+    tf.placeholderString  = ph;
+    tf.bordered           = YES;
+    tf.editable           = YES;
+    tf.font               = [NSFont systemFontOfSize:13];
+    return tf;
+}
+
+// ── Auto-Layout row helpers ───────────────────────────────────────────────────
+// Each helper adds subview(s) to `p`, applies constraints, and returns the
+// bottomAnchor of the last view added so callers can chain rows vertically.
+
+// Section header (bold small-caps label spanning from LBL_LEAD)
+static NSLayoutYAxisAnchor *addHdr(NSView *p, NSLayoutYAxisAnchor *top,
+                                    CGFloat gap, NSString *text) {
+    NSTextField *hdr = sectionHdr(text);
+    hdr.translatesAutoresizingMaskIntoConstraints = NO;
+    [p addSubview:hdr];
+    [hdr.leadingAnchor  constraintEqualToAnchor:p.leadingAnchor constant:LBL_LEAD].active = YES;
+    [hdr.topAnchor      constraintEqualToAnchor:top constant:gap].active = YES;
+    return hdr.bottomAnchor;
+}
+
+// Right-aligned label + full-width text field.
+// Label occupies LBL_LEAD … (FLD_LEAD-8); field spans FLD_LEAD … (trailing - FLD_TRAIL).
+static NSLayoutYAxisAnchor *addRow(NSView *p, NSLayoutYAxisAnchor *top,
+                                    CGFloat gap, NSString *lbl, NSView *fld) {
+    NSTextField *lb = [NSTextField labelWithString:lbl];
+    lb.font      = [NSFont systemFontOfSize:13];
+    lb.alignment = NSTextAlignmentRight;
+    lb.translatesAutoresizingMaskIntoConstraints = NO;
+    fld.translatesAutoresizingMaskIntoConstraints = NO;
+    [p addSubview:lb];
+    [p addSubview:fld];
+    // Label: pinned left and right within the label column
+    [lb.leadingAnchor   constraintEqualToAnchor:p.leadingAnchor constant:LBL_LEAD].active = YES;
+    [lb.trailingAnchor  constraintEqualToAnchor:p.leadingAnchor constant:(FLD_LEAD - 8)].active = YES;
+    [lb.centerYAnchor   constraintEqualToAnchor:fld.centerYAnchor].active = YES;
+    // Field: spans from FLD_LEAD to trailing-FLD_TRAIL, fixed height ROW_H
+    [fld.leadingAnchor  constraintEqualToAnchor:p.leadingAnchor constant:FLD_LEAD].active = YES;
+    [fld.trailingAnchor constraintEqualToAnchor:p.trailingAnchor constant:-FLD_TRAIL].active = YES;
+    [fld.heightAnchor   constraintEqualToConstant:ROW_H].active = YES;
+    [fld.topAnchor      constraintEqualToAnchor:top constant:gap].active = YES;
+    return fld.bottomAnchor;
+}
+
+// Checkbox aligned with the field leading edge (indented same as fields).
+static NSLayoutYAxisAnchor *addChk(NSView *p, NSLayoutYAxisAnchor *top,
+                                    CGFloat gap, NSButton *btn) {
+    btn.translatesAutoresizingMaskIntoConstraints = NO;
+    [p addSubview:btn];
+    [btn.leadingAnchor constraintEqualToAnchor:p.leadingAnchor constant:FLD_LEAD].active = YES;
+    [btn.topAnchor     constraintEqualToAnchor:top constant:gap].active = YES;
+    return btn.bottomAnchor;
 }
 
 // ── Tab: Connection ───────────────────────────────────────────────────────────
 - (NSTabViewItem *)buildConnectionTab {
     NSTextField *host = makeField(@"127.0.0.1");
-    NSTextField *op   = makeField(@"19840"); op.formatter   = intFmt(1, 65535);
-    NSTextField *ip   = makeField(@"19841"); ip.formatter   = intFmt(1, 65535);
-    NSTextField *poll = makeField(@"1.0");   poll.formatter = floatFmt(0.1, 60.0);
-    NSTextField *comp = makeField(@"8.0");   comp.formatter = floatFmt(1.0, 3600.0);
-    NSTextField *recv = makeField(@"400");   recv.formatter = intFmt(50, 10000);
+    NSTextField *op   = makeField(@"19840");  op.formatter   = intFmt(1, 65535);
+    NSTextField *ip   = makeField(@"19841");  ip.formatter   = intFmt(1, 65535);
+    NSTextField *poll = makeField(@"1.0");    poll.formatter = floatFmt(0.1, 60.0);
+    NSTextField *comp = makeField(@"8.0");    comp.formatter = floatFmt(1.0, 3600.0);
+    NSTextField *recv = makeField(@"400");    recv.formatter = intFmt(50, 10000);
 
     self.hostField         = host;
     self.outPortField      = op;
@@ -208,19 +244,19 @@ static NSTextField *sectionHdr(NSString *text) {
     self.completeSecsField = comp;
     self.recvTimeoutField  = recv;
 
-    NSStackView *v = [NSStackView new];
-    v.orientation  = NSUserInterfaceLayoutOrientationVertical;
-    v.spacing      = 9;
-    v.alignment    = NSLayoutAttributeLeading;
-    v.edgeInsets   = NSEdgeInsetsMake(14, 16, 14, 16);
-    [v addArrangedSubview:sectionHdr(@"LIGHTBURN CONNECTION")];
-    [v addArrangedSubview:[self row:@"LightBurn Host:"       field:host]];
-    [v addArrangedSubview:[self row:@"Out Port:"             field:op]];
-    [v addArrangedSubview:[self row:@"In Port:"              field:ip]];
-    [v addArrangedSubview:sectionHdr(@"TIMING")];
-    [v addArrangedSubview:[self row:@"Poll Interval (s):"    field:poll]];
-    [v addArrangedSubview:[self row:@"Complete Display (s):" field:comp]];
-    [v addArrangedSubview:[self row:@"Recv Timeout (ms):"    field:recv]];
+    // Content view — tab view will resize this to fill its content area.
+    // Our subviews use Auto Layout constraints relative to this view's bounds.
+    NSView *v = [[NSView alloc] init];
+    NSLayoutYAxisAnchor *top = v.topAnchor;
+    top = addHdr(v, top, TOP_PAD,  @"LIGHTBURN CONNECTION");
+    top = addRow(v, top, ROW_GAP,  @"LightBurn Host:", host);
+    top = addRow(v, top, ROW_GAP,  @"Out Port:",       op);
+    top = addRow(v, top, ROW_GAP,  @"In Port:",        ip);
+    top = addHdr(v, top, SEC_GAP,  @"TIMING");
+    top = addRow(v, top, ROW_GAP,  @"Poll Interval (s):",    poll);
+    top = addRow(v, top, ROW_GAP,  @"Complete Display (s):", comp);
+    top = addRow(v, top, ROW_GAP,  @"Recv Timeout (ms):",    recv);
+    (void)top;
 
     NSTabViewItem *item = [[NSTabViewItem alloc] initWithIdentifier:@"conn"];
     item.label = @"Connection";
@@ -254,23 +290,21 @@ static NSTextField *sectionHdr(NSString *text) {
     self.smtpFromField = sf;
     self.smtpToField   = st;
 
-    NSStackView *v = [NSStackView new];
-    v.orientation  = NSUserInterfaceLayoutOrientationVertical;
-    v.spacing      = 9;
-    v.alignment    = NSLayoutAttributeLeading;
-    v.edgeInsets   = NSEdgeInsetsMake(14, 16, 14, 16);
-    [v addArrangedSubview:sectionHdr(@"ALERTS")];
-    [v addArrangedSubview:snd];
-    [v addArrangedSubview:ntf];
-    [v addArrangedSubview:em];
-    [v addArrangedSubview:sectionHdr(@"SMTP EMAIL")];
-    [v addArrangedSubview:[self row:@"SMTP Host:"       field:sh]];
-    [v addArrangedSubview:[self row:@"SMTP Port:"       field:sp]];
-    [v addArrangedSubview:ssl];
-    [v addArrangedSubview:[self row:@"Username:"        field:su]];
-    [v addArrangedSubview:[self row:@"Password:"        field:spw]];
-    [v addArrangedSubview:[self row:@"From:"            field:sf]];
-    [v addArrangedSubview:[self row:@"To (comma-sep.):" field:st]];
+    NSView *v = [[NSView alloc] init];
+    NSLayoutYAxisAnchor *top = v.topAnchor;
+    top = addHdr(v, top, TOP_PAD,  @"ALERTS");
+    top = addChk(v, top, ROW_GAP,  snd);
+    top = addChk(v, top, ROW_GAP,  ntf);
+    top = addChk(v, top, ROW_GAP,  em);
+    top = addHdr(v, top, SEC_GAP,  @"SMTP EMAIL");
+    top = addRow(v, top, ROW_GAP,  @"SMTP Host:",       sh);
+    top = addRow(v, top, ROW_GAP,  @"SMTP Port:",       sp);
+    top = addChk(v, top, ROW_GAP,  ssl);
+    top = addRow(v, top, ROW_GAP,  @"Username:",        su);
+    top = addRow(v, top, ROW_GAP,  @"Password:",        spw);
+    top = addRow(v, top, ROW_GAP,  @"From:",            sf);
+    top = addRow(v, top, ROW_GAP,  @"To (comma-sep.):", st);
+    (void)top;
 
     NSTabViewItem *item = [[NSTabViewItem alloc] initWithIdentifier:@"email"];
     item.label = @"Email & Alerts";
@@ -342,8 +376,8 @@ static NSTextField *sectionHdr(NSString *text) {
 
     // Build to-address array
     NSMutableArray *toAddrs = [NSMutableArray array];
-    for (NSString *p in [self.smtpToField.stringValue componentsSeparatedByString:@","]) {
-        NSString *t = [p stringByTrimmingCharactersInSet:ws];
+    for (NSString *part in [self.smtpToField.stringValue componentsSeparatedByString:@","]) {
+        NSString *t = [part stringByTrimmingCharactersInSet:ws];
         if (t.length > 0) [toAddrs addObject:t];
     }
 
@@ -385,10 +419,11 @@ static NSTextField *sectionHdr(NSString *text) {
     return YES;
 }
 
-// ── Build the panel ───────────────────────────────────────────────────────────
+// ── Build the settings panel ──────────────────────────────────────────────────
 - (void)buildPanel {
+    // Panel content height: TOP(16) + tabs(435) + gap(12) + buttons(28) + BOTTOM(16) = 507
     NSPanel *p = [[NSPanel alloc]
-                  initWithContentRect:NSMakeRect(0, 0, 520, 490)
+                  initWithContentRect:NSMakeRect(0, 0, 560, 507)
                              styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                                backing:NSBackingStoreBuffered
                                  defer:NO];
@@ -398,12 +433,13 @@ static NSTextField *sectionHdr(NSString *text) {
     [p center];
     self.panel = p;
 
+    // Tab view
     NSTabView *tabs = [[NSTabView alloc] init];
     tabs.translatesAutoresizingMaskIntoConstraints = NO;
     [tabs addTabViewItem:[self buildConnectionTab]];
     [tabs addTabViewItem:[self buildEmailTab]];
 
-    // Button row: [Test Email]  ........  [Cancel] [Save]
+    // Button row: [Test Email] ...spacer... [Cancel] [Save]
     NSButton *testBtn   = [NSButton buttonWithTitle:@"Test Email\342\200\246"
                                              target:self action:@selector(onTestEmail:)];
     NSButton *cancelBtn = [NSButton buttonWithTitle:@"Cancel"
@@ -416,31 +452,33 @@ static NSTextField *sectionHdr(NSString *text) {
     NSView *spacer = [NSView new];
     [spacer setContentHuggingPriority:NSLayoutPriorityDefaultLow
                           forOrientation:NSLayoutConstraintOrientationHorizontal];
-
     NSStackView *btns = [NSStackView stackViewWithViews:@[testBtn, spacer, cancelBtn, saveBtn]];
-    btns.orientation  = NSUserInterfaceLayoutOrientationHorizontal;
-    btns.spacing      = 8;
+    btns.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    btns.spacing     = 8;
     btns.translatesAutoresizingMaskIntoConstraints = NO;
 
-    NSStackView *vStack = [NSStackView stackViewWithViews:@[tabs, btns]];
-    vStack.orientation  = NSUserInterfaceLayoutOrientationVertical;
-    vStack.spacing      = 12;
-    vStack.edgeInsets   = NSEdgeInsetsMake(16, 20, 16, 20);
-    vStack.translatesAutoresizingMaskIntoConstraints = NO;
-
     NSView *cv = p.contentView;
-    [cv addSubview:vStack];
+    [cv addSubview:tabs];
+    [cv addSubview:btns];
+
     [NSLayoutConstraint activateConstraints:@[
-        [vStack.topAnchor      constraintEqualToAnchor:cv.topAnchor],
-        [vStack.leadingAnchor  constraintEqualToAnchor:cv.leadingAnchor],
-        [vStack.trailingAnchor constraintEqualToAnchor:cv.trailingAnchor],
-        [vStack.bottomAnchor   constraintEqualToAnchor:cv.bottomAnchor],
-        [tabs.heightAnchor     constraintEqualToConstant:400],
+        // Tab view: top / sides / explicit height
+        [tabs.topAnchor      constraintEqualToAnchor:cv.topAnchor    constant:16],
+        [tabs.leadingAnchor  constraintEqualToAnchor:cv.leadingAnchor constant:16],
+        [tabs.trailingAnchor constraintEqualToAnchor:cv.trailingAnchor constant:-16],
+        [tabs.heightAnchor   constraintEqualToConstant:435],
+        // Button row: below tabs / sides / bottom
+        [btns.topAnchor      constraintEqualToAnchor:tabs.bottomAnchor constant:12],
+        [btns.leadingAnchor  constraintEqualToAnchor:cv.leadingAnchor  constant:16],
+        [btns.trailingAnchor constraintEqualToAnchor:cv.trailingAnchor constant:-16],
+        [btns.bottomAnchor   constraintEqualToAnchor:cv.bottomAnchor   constant:-16],
     ]];
 }
 
+// ── Show / hide ───────────────────────────────────────────────────────────────
 - (void)show {
     [self populateFields];
+    // Temporarily raise activation policy so the panel can become key
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [self.panel center];
     [self.panel makeKeyAndOrderFront:nil];
@@ -451,6 +489,7 @@ static NSTextField *sectionHdr(NSString *text) {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 }
 
+// ── Actions ───────────────────────────────────────────────────────────────────
 - (IBAction)onSave:(id)sender      { if ([self saveAndApply]) [self.panel close]; }
 - (IBAction)onCancel:(id)sender    { [self.panel close]; }
 - (IBAction)onTestEmail:(id)sender {
@@ -489,7 +528,7 @@ static NSTextField *sectionHdr(NSString *text) {
     self.settingsCtrl = [[SettingsController alloc] init];
     [self.settingsCtrl buildPanel];
 
-    // Notification permission
+    // Request notification permission
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
     center.delegate = self;
     [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
@@ -523,14 +562,14 @@ static NSTextField *sectionHdr(NSString *text) {
 }
 
 // ── Chained serial poll ───────────────────────────────────────────────────────
-// Each poll schedules the NEXT poll only after itself completes, so queue depth
-// never grows regardless of how long nim_poll_tick() blocks.
+// Each iteration schedules the NEXT one only AFTER the current poll completes,
+// so the queue never accumulates a backlog and latency stays constant over time.
 - (void)schedulePoll {
     if (!gPolling) return;
     int64_t ns = (int64_t)(gPollSecs * NSEC_PER_SEC);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, ns), gPollQueue, ^{
         if (!gPolling) return;
-        nim_poll_tick();                          // blocks up to recvTimeoutMs on serial queue
+        nim_poll_tick();
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!gDelegate) return;
             gItem.button.image   = iconForStatus(nim_get_status());
@@ -539,7 +578,7 @@ static NSTextField *sectionHdr(NSString *text) {
                 gStatusHdr.title = [NSString stringWithUTF8String:nim_status_label()];
             [gDelegate syncMenuItems];
         });
-        if (gDelegate) [gDelegate schedulePoll];  // schedule next poll after this one finishes
+        if (gDelegate) [gDelegate schedulePoll];
     });
 }
 
@@ -578,7 +617,7 @@ static NSTextField *sectionHdr(NSString *text) {
 
     [menu addItem:[NSMenuItem separatorItem]];
 
-    // Settings... (Test Email is inside the settings window)
+    // Settings... (Test Email lives inside)
     NSMenuItem *settingsItem = [[NSMenuItem alloc]
                                  initWithTitle:@"Settings\342\200\246"
                                         action:@selector(onSettings:)
@@ -597,6 +636,7 @@ static NSTextField *sectionHdr(NSString *text) {
     return menu;
 }
 
+// ── Menu actions ──────────────────────────────────────────────────────────────
 - (IBAction)onSound:(id)sender    { nim_toggle_sound();  [self syncMenuItems]; }
 - (IBAction)onNotify:(id)sender   { nim_toggle_notify(); [self syncMenuItems]; }
 - (IBAction)onEmail:(id)sender    { nim_toggle_email();  [self syncMenuItems]; }
@@ -612,6 +652,7 @@ static NSTextField *sectionHdr(NSString *text) {
     gEmailItem.state  = nim_get_email_on()  ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
+// ── Complete timer ────────────────────────────────────────────────────────────
 - (void)startCompleteTimer {
     [self.completeTimer invalidate];
     self.completeTimer = [NSTimer scheduledTimerWithTimeInterval:gCompleteSecs
@@ -630,6 +671,7 @@ static NSTextField *sectionHdr(NSString *text) {
     self.completeTimer = nil;
 }
 
+// ── UNUserNotificationCenterDelegate ─────────────────────────────────────────
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
@@ -640,7 +682,9 @@ static NSTextField *sectionHdr(NSString *text) {
 
 @end  // TrayDelegate
 
-// ── C API called from Nim ─────────────────────────────────────────────────────
+// =============================================================================
+// C API called from Nim (lightburn_tray_mac.nim)
+// =============================================================================
 
 void mac_setup(double pollSecs, double completeSecs) {
     gPollSecs     = pollSecs;
@@ -656,8 +700,6 @@ void mac_run(void) {
 }
 
 void mac_update_poll_interval(double newSecs) {
-    // gPollSecs is read by schedulePoll at the start of each chained dispatch.
-    // Updating it here takes effect for the very next scheduled poll.
     gPollSecs     = newSecs;
     gCompleteSecs = nim_cfg_complete_secs();
 }
@@ -694,7 +736,7 @@ void mac_start_complete_timer(void) {
 }
 
 void mac_stop_all_timers(void) {
-    gPolling = NO;   // stops the schedulePoll chain after the current in-flight poll
+    gPolling = NO;
     dispatch_async(dispatch_get_main_queue(), ^{ [gDelegate stopCompleteTimer]; });
 }
 

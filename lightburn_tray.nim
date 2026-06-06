@@ -173,7 +173,7 @@ proc playAlert() =
 # ─── Settings dialog ─────────────────────────────────────────────────────────
 proc showSettingsDialog() =
   ## Open the native settings window (or bring existing one to front).
-  if not gSettingsDlg.isNil and IsWindow(gSettingsDlg.mHwnd):
+  if not gSettingsDlg.isNil and IsWindow(gSettingsDlg.mHwnd) != 0:
     SetForegroundWindow(gSettingsDlg.mHwnd)
     return
 
