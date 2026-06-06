@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 make_dmg_bg.py — generate the background image for LightBurnMonitor.dmg
-Produces dmg_background.png (620x420) in the project root.
+Produces dmg_background.png (620x460) in the project root.
 Requires Pillow (already a project dependency via make_icon.py).
 """
 import sys, subprocess, os
@@ -24,7 +24,7 @@ except ImportError:
     from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 # Finder window dimensions — must match the AppleScript bounds in build.sh
-W, H = 620, 420
+W, H = 620, 460
 
 # Icon positions inside the Finder window (set by AppleScript)
 APP_X,  APP_Y  = 150, 190   # LightBurnMonitor.app icon centre
