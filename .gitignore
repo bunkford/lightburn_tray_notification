@@ -5,6 +5,10 @@ lightburn_tray.exe
 # macOS app bundle (built by build.sh)
 LightBurnMonitor.app/
 
+# DMG installer and its build artifacts
+LightBurnMonitor-*.dmg
+dmg_background.png
+
 # Generated icon files (rebuilt by make_icon.py / build.sh)
 AppIcon.icns
 AppIcon.ico
