@@ -69,14 +69,16 @@ jobs:
       - name: Build and bundle
         run: bash build.sh
 
-      - name: Zip app bundle
-        run: zip -r LightBurnMonitor-arm64.app.zip LightBurnMonitor.app
+      - name: Rename DMG for architecture
+        run: |
+          VERSION=$(grep '^version' lightburn_tray_notification.nimble | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          mv "LightBurnMonitor-${VERSION}.dmg" LightBurnMonitor-arm64.dmg
 
       - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: LightBurnMonitor-arm64.app.zip
+          path: LightBurnMonitor-arm64.dmg
 
   build-macos-intel:
     name: Build macOS (Intel)
@@ -100,14 +102,16 @@ jobs:
       - name: Build and bundle
         run: bash build.sh
 
-      - name: Zip app bundle
-        run: zip -r LightBurnMonitor-x86_64.app.zip LightBurnMonitor.app
+      - name: Rename DMG for architecture
+        run: |
+          VERSION=$(grep '^version' lightburn_tray_notification.nimble | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          mv "LightBurnMonitor-${VERSION}.dmg" LightBurnMonitor-x86_64.dmg
 
       - name: Upload macOS x86_64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-x86_64
-          path: LightBurnMonitor-x86_64.app.zip
+          path: LightBurnMonitor-x86_64.dmg
 
   release:
     name: Create GitHub Release
@@ -135,5 +139,5 @@ jobs:
           generate_release_notes: true
           files: |
             windows/lightburn_tray.exe
-            macos-arm64/LightBurnMonitor-arm64.app.zip
-            macos-x86_64/LightBurnMonitor-x86_64.app.zip
+            macos-arm64/LightBurnMonitor-arm64.dmg
+            macos-x86_64/LightBurnMonitor-x86_64.dmg
