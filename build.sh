@@ -112,14 +112,15 @@ tell application "Finder"
     set current view of container window to icon view
     set toolbar visible of container window to false
     set statusbar visible of container window to false
-    set the bounds of container window to {200, 120, 740, 500}
+    set the bounds of container window to {200, 120, 820, 540}
     set theViewOptions to the icon view options of container window
     set arrangement of theViewOptions to not arranged
     set icon size of theViewOptions to 96
     set background picture of theViewOptions to file ".background:bg.png"
     -- Position the app icon on the left, Applications alias on the right
-    set position of item "LightBurnMonitor.app" of container window to {140, 185}
-    set position of item "Applications"         of container window to {400, 185}
+    -- These must match APP_X/DST_X in make_dmg_bg.py
+    set position of item "LightBurnMonitor.app" of container window to {150, 190}
+    set position of item "Applications"         of container window to {470, 190}
     close
     open
     update without registering applications
@@ -129,8 +130,8 @@ tell application "Finder"
 end tell
 APPLESCRIPT
 
-# Mark the volume icon
-SetFile -a C "$MOUNT_PT" 2>/dev/null || true
+# Mark the volume icon (requires Xcode SetFile; silently skipped if unavailable or restricted)
+SetFile -a C "$MOUNT_PT" >/dev/null 2>&1 || true
 
 # Unmount
 hdiutil detach "$DEVICE" -quiet
