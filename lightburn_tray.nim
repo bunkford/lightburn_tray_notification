@@ -28,6 +28,12 @@ when not defined(windows):
 # The build step runs: windres lightburn_tray.rc lightburn_tray.o
 {.link: "lightburn_tray.o".}
 
+# Windows Credential Manager (advapi32) — wraps CredWriteW/CredReadW for SMTP password.
+{.compile: "lightburn_win_cred.c".}
+{.passL: "-ladvapi32".}
+proc winSaveCredential(password: cstring) {.importc: "win_save_credential".}
+proc winLoadCredential(): cstring         {.importc: "win_load_credential".}
+
 import ./lightburn_shared
 import std/[os, strutils]
 import wnim
@@ -345,7 +351,8 @@ proc showSettingsDialog() =
       gFrame.stopTimer(TIMER_POLL)
       gFrame.startTimer(gCfg.pollSecs, TIMER_POLL)
 
-    saveSettings(gCfg)
+    winSaveCredential(gCfg.smtp.password.cstring)  # save to Credential Manager
+    saveSettings(gCfg)  # writes JSON without the password
     dlg.close()
 
   dlg.connect(wEvent_Close) do (ev: wEvent):
@@ -401,6 +408,13 @@ proc showContextMenu(hwnd: HWND) =
 when isMainModule:
   # Load settings from JSON file in app directory
   gCfg     = loadSettings()
+  # Load SMTP password from Windows Credential Manager (not stored in JSON)
+  let credPw = $winLoadCredential()
+  if credPw.len > 0:
+    gCfg.smtp.password = credPw      # cred store wins over JSON
+  elif gCfg.smtp.password.len > 0:
+    # Migration: JSON had a plaintext password — move it to cred store
+    winSaveCredential(gCfg.smtp.password.cstring)
   gSoundOn  = gCfg.soundOn
   gNotifyOn = gCfg.notifyOn
   gEmailOn  = gCfg.emailOn

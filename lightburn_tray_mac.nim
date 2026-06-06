@@ -18,7 +18,7 @@ import std/[os, osproc, strutils]
 
 # ─── Link the ObjC helper and Cocoa framework ─────────────────────────────────
 {.compile: "lightburn_mac_helper.m".}
-{.passL: "-framework Cocoa -framework Foundation -framework UserNotifications".}
+{.passL: "-framework Cocoa -framework Foundation -framework UserNotifications -framework Security".}
 
 # ─── C API declared by lightburn_mac_helper.m ────────────────────────────────
 proc mac_setup(pollSecs, completeSecs: cdouble) {.importc.}
@@ -115,6 +115,8 @@ proc nim_cfg_smtp_username(): cstring {.exportc.} =
   gCfgStrBuf = gCfg.smtp.username; gCfgStrBuf.cstring
 proc nim_cfg_smtp_password(): cstring {.exportc.} =
   gCfgStrBuf = gCfg.smtp.password; gCfgStrBuf.cstring
+proc nim_set_smtp_password(pw: cstring) {.exportc.} =
+  gCfg.smtp.password = $pw
 proc nim_cfg_smtp_from(): cstring {.exportc.} =
   gCfgStrBuf = gCfg.smtp.fromAddr; gCfgStrBuf.cstring
 proc nim_cfg_smtp_to(): cstring {.exportc.} =

@@ -7,6 +7,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <UserNotifications/UserNotifications.h>
+#import <Security/Security.h>
 
 // ── Nim exports called from this file ────────────────────────────────────────
 extern void        nim_poll_tick(void);
@@ -37,6 +38,7 @@ extern const char *nim_cfg_smtp_password(void);
 extern const char *nim_cfg_smtp_from(void);
 extern const char *nim_cfg_smtp_to(void);
 extern int         nim_reload_settings(void);
+extern void        nim_set_smtp_password(const char *pw);
 
 // ── Forward declarations ──────────────────────────────────────────────────────
 @class TrayDelegate;
@@ -84,6 +86,54 @@ static NSImage *iconForStatus(int s) {
         case 3:  return dotImage(0.00, 0.63, 1.00);   // blue   - complete
         default: return dotImage(0.39, 0.39, 0.39);   // grey   - disconnected
     }
+}
+
+// =============================================================================
+// Keychain helpers — SMTP password stored under service "LightBurnMonitor"
+// =============================================================================
+#define KC_SERVICE "LightBurnMonitor"
+#define KC_ACCOUNT "smtp"
+
+static char gKcPwBuf[1024];
+
+// Delete-then-add so we handle both create and update.
+static void mac_save_to_keychain(const char *password) {
+    NSDictionary *del = @{
+        (__bridge id)kSecClass:       (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @KC_SERVICE,
+        (__bridge id)kSecAttrAccount: @KC_ACCOUNT,
+    };
+    SecItemDelete((__bridge CFDictionaryRef)del);
+    if (!password || password[0] == '\0') return;
+    NSDictionary *add = @{
+        (__bridge id)kSecClass:       (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @KC_SERVICE,
+        (__bridge id)kSecAttrAccount: @KC_ACCOUNT,
+        (__bridge id)kSecValueData:   [NSData dataWithBytes:password length:strlen(password)],
+    };
+    SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+}
+
+// Returns pointer to a static buffer; valid until next call.
+static const char *mac_load_from_keychain(void) {
+    gKcPwBuf[0] = '\0';
+    NSDictionary *query = @{
+        (__bridge id)kSecClass:       (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: @KC_SERVICE,
+        (__bridge id)kSecAttrAccount: @KC_ACCOUNT,
+        (__bridge id)kSecReturnData:  @YES,
+        (__bridge id)kSecMatchLimit:  (__bridge id)kSecMatchLimitOne,
+    };
+    CFDataRef result = NULL;
+    OSStatus st = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef *)&result);
+    if (st == errSecSuccess && result != NULL) {
+        CFIndex len = CFDataGetLength(result);
+        if (len >= (CFIndex)sizeof(gKcPwBuf)) len = sizeof(gKcPwBuf) - 1;
+        memcpy(gKcPwBuf, CFDataGetBytePtr(result), (size_t)len);
+        gKcPwBuf[len] = '\0';
+        CFRelease(result);
+    }
+    return gKcPwBuf;
 }
 
 // =============================================================================
@@ -415,6 +465,11 @@ static NSLayoutYAxisAnchor *addChk(NSView *p, NSLayoutYAxisAnchor *top,
     [data writeToFile:jsonPath atomically:YES];
 
     nim_reload_settings();
+    // Restore SMTP password: nim_reload_settings() wiped it (JSON holds no password).
+    // Save the user-entered value to Keychain and restore it in Nim's state.
+    const char *pw = self.smtpPassField.stringValue.UTF8String ?: "";
+    mac_save_to_keychain(pw);
+    nim_set_smtp_password(pw);
     mac_update_poll_interval(nim_cfg_poll_secs());
     return YES;
 }
@@ -527,6 +582,23 @@ static NSLayoutYAxisAnchor *addChk(NSView *p, NSLayoutYAxisAnchor *top,
 
     self.settingsCtrl = [[SettingsController alloc] init];
     [self.settingsCtrl buildPanel];
+
+    // Load SMTP password from macOS Keychain into Nim state.
+    // Migrates transparently: if Keychain is empty but JSON had a plaintext
+    // password (older versions), save it to Keychain now.
+    {
+        const char *kc_pw = mac_load_from_keychain();
+        if (kc_pw[0] != '\0') {
+            nim_set_smtp_password(kc_pw);   // Keychain value wins
+        } else {
+            // Nothing in Keychain — check if an old JSON password was loaded
+            const char *json_pw = nim_cfg_smtp_password();
+            if (json_pw && json_pw[0] != '\0') {
+                mac_save_to_keychain(json_pw);  // migrate to Keychain
+                // gCfg.smtp.password already has the value; no need to call nim_set_smtp_password
+            }
+        }
+    }
 
     // Request notification permission
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];

@@ -179,7 +179,7 @@ proc saveSettings*(s: Settings) =
   smtp["port"]     = newJInt(s.smtp.port)
   smtp["useSsl"]   = newJBool(s.smtp.useSsl)
   smtp["username"] = newJString(s.smtp.username)
-  smtp["password"] = newJString(s.smtp.password)
+  smtp["password"] = newJString("")  # stored in keychain/credential manager, not on disk
   smtp["fromAddr"] = newJString(s.smtp.fromAddr)
   var toArr = newJArray()
   for a in s.smtp.toAddrs: toArr.add(newJString(a))
