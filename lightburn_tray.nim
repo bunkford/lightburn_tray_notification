@@ -286,7 +286,20 @@ proc showSettingsDialog() =
 
   # ── Event handlers ─────────────────────────────────────────────────────────
   testEmailBtn.connect(wEvent_Button) do (ev: wEvent):
-    let (ok, err) = sendTestEmail()
+    let smtpPort = try: smtpPortCtrl.value.strip().parseInt except: gCfg.smtp.port
+    var toAddrs: seq[string]
+    for part in smtpToCtrl.value.split(','):
+      let t = part.strip()
+      if t.len > 0: toAddrs.add(t)
+    let tmpSmtp = SmtpSettings(
+      host:     smtpHostCtrl.value.strip(),
+      port:     smtpPort,
+      useSsl:   smtpSslChk.isChecked(),
+      username: smtpUserCtrl.value.strip(),
+      password: smtpPassCtrl.value,
+      fromAddr: smtpFromCtrl.value.strip(),
+      toAddrs:  toAddrs)
+    let (ok, err) = sendTestEmailWith(tmpSmtp)
     if ok:
       discard MessageBoxW(0, newWideCString("Test email delivered successfully."),
                           newWideCString(AppName), MB_ICONINFORMATION or MB_OK)

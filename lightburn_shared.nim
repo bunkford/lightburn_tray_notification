@@ -158,8 +158,15 @@ proc sendAlertEmail*(): tuple[ok: bool, err: string] =
   smtpSend("LightBurn Job Complete", "LightBurn has finished the job.")
 
 proc sendTestEmail*(): tuple[ok: bool, err: string] =
-  ## Send a test email to verify SMTP settings (ignores gEmailOn).
+  ## Send a test email using current gCfg.smtp (ignores gEmailOn).
   smtpSend("LightBurn Monitor — Test", "Email settings are working correctly.")
+
+proc sendTestEmailWith*(smtp: SmtpSettings): tuple[ok: bool, err: string] =
+  ## Send a test email using the given smtp settings (unsaved field values).
+  let saved = gCfg.smtp
+  gCfg.smtp = smtp
+  result = smtpSend("LightBurn Monitor — Test", "Email settings are working correctly.")
+  gCfg.smtp = saved
 
 proc saveSettings*(s: Settings) =
   ## Persist the given settings back to lightburn_tray.json.

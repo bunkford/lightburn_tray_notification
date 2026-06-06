@@ -72,6 +72,20 @@ proc nim_send_test_email(): cint {.exportc.} =
   gEmailErrBuf = err
   result = cint(ok)
 
+proc nim_send_test_email_fields(host: cstring; port: cint; useSsl: cint;
+                                username: cstring; password: cstring;
+                                fromAddr: cstring; toStr: cstring): cint {.exportc.} =
+  var toAddrs: seq[string]
+  for part in ($toStr).split(','):
+    let t = part.strip()
+    if t.len > 0: toAddrs.add(t)
+  let smtp = SmtpSettings(host: $host, port: port.int, useSsl: useSsl != 0,
+                          username: $username, password: $password,
+                          fromAddr: $fromAddr, toAddrs: toAddrs)
+  let (ok, err) = sendTestEmailWith(smtp)
+  gEmailErrBuf = err
+  result = cint(ok)
+
 proc nim_email_last_error(): cstring {.exportc.} =
   gEmailErrBuf.cstring
 

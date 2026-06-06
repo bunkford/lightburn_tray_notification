@@ -22,6 +22,9 @@ extern int         nim_get_notify_on(void);
 extern int         nim_get_email_on(void);
 extern int         nim_get_status(void);
 extern int         nim_send_test_email(void);
+extern int         nim_send_test_email_fields(const char *host, int port, int useSsl,
+                                              const char *username, const char *password,
+                                              const char *fromAddr, const char *toStr);
 extern const char *nim_email_last_error(void);
 // Settings read API (main-thread only)
 extern const char *nim_cfg_lb_host(void);
@@ -434,7 +437,7 @@ static NSLayoutYAxisAnchor *addChk(NSView *p, NSLayoutYAxisAnchor *top,
     NSDictionary *smtp = @{
         @"host":     [self.smtpHostField.stringValue stringByTrimmingCharactersInSet:ws],
         @"port":     @(smtpPort),
-        @"useSsl":   @(self.smtpSslCheck.state == NSControlStateValueOn),
+        @"useSsl":   (self.smtpSslCheck.state  == NSControlStateValueOn) ? @YES : @NO,
         @"username": self.smtpUserField.stringValue,
         @"password": @"",  // never stored on disk; saved to Keychain below
         @"fromAddr": fromAddr,
@@ -447,9 +450,9 @@ static NSLayoutYAxisAnchor *addChk(NSView *p, NSLayoutYAxisAnchor *top,
         @"pollSecs":      @(pollSecs),
         @"completeSecs":  @(completeSecs),
         @"recvTimeoutMs": @(recvMs),
-        @"soundOn":       @(self.soundCheck.state  == NSControlStateValueOn),
-        @"notifyOn":      @(self.notifyCheck.state == NSControlStateValueOn),
-        @"emailOn":       @(self.emailCheck.state  == NSControlStateValueOn),
+        @"soundOn":       (self.soundCheck.state   == NSControlStateValueOn) ? @YES : @NO,
+        @"notifyOn":      (self.notifyCheck.state  == NSControlStateValueOn) ? @YES : @NO,
+        @"emailOn":       (self.emailCheck.state   == NSControlStateValueOn) ? @YES : @NO,
         @"smtp":          smtp,
     };
 
@@ -548,8 +551,24 @@ static NSLayoutYAxisAnchor *addChk(NSView *p, NSLayoutYAxisAnchor *top,
 - (IBAction)onSave:(id)sender      { if ([self saveAndApply]) [self.panel close]; }
 - (IBAction)onCancel:(id)sender    { [self.panel close]; }
 - (IBAction)onTestEmail:(id)sender {
+    // Capture field values on the main thread before dispatching
+    const char *host     = self.smtpHostField.stringValue.UTF8String;
+    int         port     = self.smtpPortField.intValue;
+    int         useSsl   = (self.smtpSslCheck.state == NSControlStateValueOn) ? 1 : 0;
+    const char *username = self.smtpUserField.stringValue.UTF8String;
+    const char *password = self.smtpPassField.stringValue.UTF8String;
+    const char *fromAddr = self.smtpFromField.stringValue.UTF8String;
+    const char *toStr    = self.smtpToField.stringValue.UTF8String;
+    // Copy to heap so the block can capture them safely
+    NSString *nsHost     = self.smtpHostField.stringValue;
+    NSString *nsUsername = self.smtpUserField.stringValue;
+    NSString *nsPassword = self.smtpPassField.stringValue;
+    NSString *nsFrom     = self.smtpFromField.stringValue;
+    NSString *nsTo       = self.smtpToField.stringValue;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        int ok = nim_send_test_email();
+        int ok = nim_send_test_email_fields(nsHost.UTF8String, port, useSsl,
+                                            nsUsername.UTF8String, nsPassword.UTF8String,
+                                            nsFrom.UTF8String, nsTo.UTF8String);
         mac_show_notification(ok ? "Email Sent" : "Email Failed",
                               ok ? "Test email delivered successfully."
                                  : nim_email_last_error());
