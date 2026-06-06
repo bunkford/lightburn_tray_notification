@@ -1,5 +1,5 @@
 # Package
-version       = "1.5.6"
+version       = "1.5.7"
 author        = "bunkford"
 description   = "Menu-bar / system-tray monitor for LightBurn laser software"
 license       = "MIT"
