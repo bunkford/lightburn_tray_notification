@@ -78,7 +78,9 @@ def make_background(out_path: str) -> None:
                (ax + half - 14, ay + 12)], fill=arr_col)
 
     # ── Bottom separator + footer text ───────────────────────────────────────
-    sep_y = H - 68
+    # Keep footer well clear of the bottom edge — Finder's title bar consumes
+    # ~28px from the window bounds, so the last ~30px of the image is hidden.
+    sep_y = H - 120
     d.line([(0, sep_y), (W, sep_y)], fill=(0, 0, 0, 30))
 
     # Footer strip — slightly darker shade
