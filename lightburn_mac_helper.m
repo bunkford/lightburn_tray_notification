@@ -436,7 +436,7 @@ static NSLayoutYAxisAnchor *addChk(NSView *p, NSLayoutYAxisAnchor *top,
         @"port":     @(smtpPort),
         @"useSsl":   @(self.smtpSslCheck.state == NSControlStateValueOn),
         @"username": self.smtpUserField.stringValue,
-        @"password": self.smtpPassField.stringValue,
+        @"password": @"",  // never stored on disk; saved to Keychain below
         @"fromAddr": fromAddr,
         @"toAddrs":  toAddrs,
     };
