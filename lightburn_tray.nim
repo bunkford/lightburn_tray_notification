@@ -235,7 +235,7 @@ proc showSettingsDialog() =
   # ── Tab 2: Email & Alerts ──────────────────────────────────────────────────
   let pg2 = Panel(nb)
   nb.addPage(pg2, "Email && Alerts")
-  nb.select(0)  # ensure tab 1 is shown first
+  nb.setSelection(0)  # ensure tab 1 is shown first
 
   y = TOP_PAD
 
