@@ -32,23 +32,23 @@ DST_X,  DST_Y  = 470, 190   # Applications alias icon centre
 ICON_SIZE = 96               # Finder icon size (set in AppleScript)
 
 def make_background(out_path: str) -> None:
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+    img = Image.new("RGBA", (W, H), (255, 255, 255, 255))
     d   = ImageDraw.Draw(img)
 
-    # ── Dark gradient background ─────────────────────────────────────────────
-    top_col    = (18, 20, 28)
-    bottom_col = (30, 32, 44)
+    # ── Light gradient background ─────────────────────────────────────────────
+    top_col    = (245, 246, 250)   # near-white
+    bottom_col = (218, 220, 232)   # light lavender-grey
     for y in range(H):
         t = y / H
-        r = int(top_col[0] + (bottom_col[0] - top_col[0]) * t)
-        g = int(top_col[1] + (bottom_col[1] - top_col[1]) * t)
-        b = int(top_col[2] + (bottom_col[2] - top_col[2]) * t)
-        d.line([(0, y), (W, y)], fill=(r, g, b))
+        rv = int(top_col[0] + (bottom_col[0] - top_col[0]) * t)
+        gv = int(top_col[1] + (bottom_col[1] - top_col[1]) * t)
+        bv = int(top_col[2] + (bottom_col[2] - top_col[2]) * t)
+        d.line([(0, y), (W, y)], fill=(rv, gv, bv))
 
-    # ── Subtle grid lines ────────────────────────────────────────────────────
+    # ── Subtle dark grid lines ────────────────────────────────────────────────
     grid_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(grid_img)
-    grid_col = (255, 255, 255, 10)
+    grid_col = (0, 0, 0, 14)
     for x in range(0, W, 30):
         gd.line([(x, 0), (x, H)], fill=grid_col)
     for y in range(0, H, 30):
@@ -59,36 +59,18 @@ def make_background(out_path: str) -> None:
     # ── Soft orange glow behind the app icon ─────────────────────────────────
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd2  = ImageDraw.Draw(glow)
-    r = ICON_SIZE + 20
-    gd2.ellipse([APP_X - r, APP_Y - r, APP_X + r, APP_Y + r],
-                fill=(255, 140, 0, 32))
+    gr = ICON_SIZE + 20
+    gd2.ellipse([APP_X - gr, APP_Y - gr, APP_X + gr, APP_Y + gr],
+                fill=(255, 140, 0, 45))
     glow = glow.filter(ImageFilter.GaussianBlur(radius=42))
     img  = Image.alpha_composite(img, glow)
     d    = ImageDraw.Draw(img)
-
-    # ── Legible label backdrops under each icon ───────────────────────────────
-    # Finder renders the icon label (filename) just below the icon image.
-    # A subtle pill-shaped dark overlay improves contrast on the grid background.
-    label_h  = 36   # height of the backdrop strip
-    label_w  = 148  # width (wider than longest label text)
-    label_y  = APP_Y + ICON_SIZE // 2 + 2   # just below icon bottom
-    for cx in (APP_X, DST_X):
-        backdrop = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        bd = ImageDraw.Draw(backdrop)
-        bd.rounded_rectangle(
-            [cx - label_w // 2, label_y,
-             cx + label_w // 2, label_y + label_h],
-            radius=8, fill=(0, 0, 0, 120)
-        )
-        backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=3))
-        img = Image.alpha_composite(img, backdrop)
-    d = ImageDraw.Draw(img)
 
     # ── Arrow between icons ───────────────────────────────────────────────────
     ax     = (APP_X + DST_X) // 2
     ay     = APP_Y
     half   = (DST_X - APP_X) // 2 - ICON_SIZE // 2 - 8
-    arr_col = (255, 255, 255, 110)
+    arr_col = (100, 100, 130, 200)
     shaft_w = 3
     d.rectangle([ax - half, ay - shaft_w, ax + half - 14, ay + shaft_w], fill=arr_col)
     d.polygon([(ax + half - 14, ay - 12),
@@ -97,7 +79,15 @@ def make_background(out_path: str) -> None:
 
     # ── Bottom separator + footer text ───────────────────────────────────────
     sep_y = H - 68
-    d.line([(0, sep_y), (W, sep_y)], fill=(255, 255, 255, 22))
+    d.line([(0, sep_y), (W, sep_y)], fill=(0, 0, 0, 30))
+
+    # Footer strip — slightly darker shade
+    for y in range(sep_y, H):
+        t = (y - sep_y) / max(1, H - sep_y)
+        rv = int(210 + (195 - 210) * t)
+        gv = int(212 + (197 - 212) * t)
+        bv = int(222 + (210 - 222) * t)
+        d.line([(0, y), (W, y)], fill=(rv, gv, bv))
 
     title = "LightBurn Monitor"
     sub   = "Drag to Applications to install"
@@ -122,15 +112,14 @@ def make_background(out_path: str) -> None:
     ty = sep_y + 12
     bb = d.textbbox((0, 0), title, font=font_title)
     tw = bb[2] - bb[0]
-    # Clamp to stay within padded bounds
     tx = max(pad, (W - tw) // 2)
-    d.text((tx, ty), title, font=font_title, fill=(255, 255, 255, 220))
+    d.text((tx, ty), title, font=font_title, fill=(30, 30, 50, 235))
 
     sy = ty + 26
     bb2 = d.textbbox((0, 0), sub, font=font_sub)
     sw = bb2[2] - bb2[0]
     sx = max(pad, (W - sw) // 2)
-    d.text((sx, sy), sub, font=font_sub, fill=(180, 180, 200, 170))
+    d.text((sx, sy), sub, font=font_sub, fill=(70, 70, 100, 210))
 
     img = img.convert("RGB")
     img.save(out_path, "PNG")

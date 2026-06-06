@@ -70,41 +70,41 @@ VERSION=$(grep '^version' "$SCRIPT_DIR/lightburn_tray_notification.nimble" \
           | head -1 | sed 's/.*"\(.*\)".*/\1/')
 DMG_NAME="LightBurnMonitor-${VERSION}.dmg"
 DMG_TITLE="LightBurnMonitor"
-STAGING="$SCRIPT_DIR/_dmg_staging"
 TEMP_DMG="$SCRIPT_DIR/_temp.dmg"
 FINAL_DMG="$SCRIPT_DIR/$DMG_NAME"
 
 # Generate background image
 python3 "$SCRIPT_DIR/make_dmg_bg.py"
 
-# Build staging area
-rm -rf "$STAGING"
-mkdir -p "$STAGING/.background"
-cp -r "$APP" "$STAGING/"
-ln -sf /Applications "$STAGING/Applications"
-cp "$SCRIPT_DIR/dmg_background.png" "$STAGING/.background/bg.png"
-
-# Copy volume icon (.VolumeIcon.icns must be at root of staging)
-[ -f "$SCRIPT_DIR/AppIcon.icns" ] && cp "$SCRIPT_DIR/AppIcon.icns" "$STAGING/.VolumeIcon.icns"
-
-# Create a temporary read-write DMG large enough to hold the app
+# ── Create an empty writable HFS+ DMG ─────────────────────────────────────────
+# NOTE: We must NOT use -srcfolder here.  If we pre-populate the DMG from a
+# staging folder the Finder .DS_Store that AppleScript writes on the mounted
+# volume gets discarded during the later UDZO conversion.  Instead we create
+# an empty image, mount it, copy files manually, let AppleScript write the
+# window settings, sync the disk, then detach and compress.
 rm -f "$TEMP_DMG"
-hdiutil create \
+hdiutil create -size 80m \
   -volname "$DMG_TITLE" \
-  -srcfolder "$STAGING" \
-  -ov -format UDRW \
-  -size 80m \
+  -fs HFS+ \
+  -fsargs "-c c=12,b=4096" \
+  -format UDRW \
   "$TEMP_DMG" >/dev/null
 
-# Mount the writable image (suppress automount dialog)
 MOUNT_OUT=$(hdiutil attach -readwrite -noverify -noautoopen "$TEMP_DMG")
 DEVICE=$(echo "$MOUNT_OUT" | awk 'END{print $1}')
 MOUNT_PT="/Volumes/$DMG_TITLE"
 
-# Wait a moment for Finder to register the volume
-sleep 1
+# Copy files onto the mounted volume
+cp -r "$APP" "$MOUNT_PT/"
+ln -sf /Applications "$MOUNT_PT/Applications"
+mkdir -p "$MOUNT_PT/.background"
+cp "$SCRIPT_DIR/dmg_background.png" "$MOUNT_PT/.background/bg.png"
+[ -f "$SCRIPT_DIR/AppIcon.icns" ] && cp "$SCRIPT_DIR/AppIcon.icns" "$MOUNT_PT/.VolumeIcon.icns"
 
-# Customise the Finder window via AppleScript
+# Give Finder a moment to notice the new volume
+sleep 2
+
+# ── Set Finder window layout via AppleScript ───────────────────────────────────
 osascript <<APPLESCRIPT
 tell application "Finder"
   tell disk "$DMG_TITLE"
@@ -117,32 +117,29 @@ tell application "Finder"
     set arrangement of theViewOptions to not arranged
     set icon size of theViewOptions to 96
     set background picture of theViewOptions to file ".background:bg.png"
-    -- Position the app icon on the left, Applications alias on the right
-    -- These must match APP_X/DST_X in make_dmg_bg.py
     set position of item "LightBurnMonitor.app" of container window to {150, 190}
     set position of item "Applications"         of container window to {470, 190}
-    close
-    open
     update without registering applications
-    delay 2
+    delay 3
     close
   end tell
 end tell
 APPLESCRIPT
 
-# Mark the volume icon (requires Xcode SetFile; silently skipped if unavailable or restricted)
+# Flush all pending writes so .DS_Store lands on disk before we detach
+sync
+sleep 1
+
+# Mark the volume icon (requires Xcode SetFile; silently skipped if unavailable)
 SetFile -a C "$MOUNT_PT" >/dev/null 2>&1 || true
 
-# Unmount
 hdiutil detach "$DEVICE" -quiet
 
-# Convert to compressed read-only DMG
+# ── Convert to compressed read-only DMG ───────────────────────────────────────
 rm -f "$FINAL_DMG"
 hdiutil convert "$TEMP_DMG" -format UDZO -imagekey zlib-level=9 \
   -o "$FINAL_DMG" >/dev/null
 
-# Cleanup
 rm -f "$TEMP_DMG"
-rm -rf "$STAGING"
 
 echo "==> DMG ready: $FINAL_DMG"
