@@ -76,6 +76,12 @@ FINAL_DMG="$SCRIPT_DIR/$DMG_NAME"
 # Generate background image
 python3 "$SCRIPT_DIR/make_dmg_bg.py"
 
+# Detach any stale mount of the same volume name (e.g. left open from a
+# previous build or a user clicking the DMG to verify it).
+if [ -d "/Volumes/$DMG_TITLE" ]; then
+  hdiutil detach "/Volumes/$DMG_TITLE" -quiet -force 2>/dev/null || true
+fi
+
 # ── Create an empty writable HFS+ DMG ─────────────────────────────────────────
 # NOTE: We must NOT use -srcfolder here.  If we pre-populate the DMG from a
 # staging folder the Finder .DS_Store that AppleScript writes on the mounted
@@ -91,7 +97,9 @@ hdiutil create -size 80m \
 
 MOUNT_OUT=$(hdiutil attach -readwrite -noverify -noautoopen "$TEMP_DMG")
 DEVICE=$(echo "$MOUNT_OUT" | awk 'END{print $1}')
-MOUNT_PT="/Volumes/$DMG_TITLE"
+# Derive the actual mount point from hdiutil output (avoids hardcoding,
+# handles the case where /Volumes/$DMG_TITLE is already in use by an old DMG).
+MOUNT_PT=$(echo "$MOUNT_OUT" | grep -o "/Volumes/.*" | tail -1)
 
 # Copy files onto the mounted volume
 cp -r "$APP" "$MOUNT_PT/"
